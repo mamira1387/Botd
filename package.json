@@ -2,7 +2,6 @@
   "name": "depth-ton-bot",
   "version": "1.0.0",
   "description": "Depth TON Wallet Bot - Telegram (grammY + Supabase + Vercel Serverless)",
-  "main": "index.js",
   "engines": { "node": ">=18" },
   "dependencies": {
     "grammy": "^1.24.0",

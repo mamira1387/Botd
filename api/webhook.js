@@ -531,7 +531,7 @@ async function payBill(ctx, billId) {
 // 10) خروجی سازگار با Vercel Serverless Function
 // ==========================================================================
 
-const handleUpdate = webhookCallback(bot, "std/http");
+const handleUpdate = webhookCallback(bot, "next-js");
 
 module.exports = async (req, res) => {
   // جلوگیری از ارور ۵۰۰ هنگام تست دستی در مرورگر (GET)
@@ -554,3 +554,4 @@ module.exports = async (req, res) => {
     }
   }
 };
+      

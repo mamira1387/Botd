@@ -187,8 +187,75 @@ bot.command("wallet", async (ctx) => {
 });
 
 // ==========================================================================
-// 6) مدیریت ادمین‌ها: /addadmin و /deladmin
+// 5.1) دستور /help
 // ==========================================================================
+
+bot.command("help", async (ctx) => {
+  const adminStatus = await isAdmin(ctx.from.id);
+  const ownerStatus = await isOwner(ctx.from.id);
+
+  let text =
+    `📖 <b>راهنمای Depth TON Bot</b>\n\n` +
+    `<b>👛 ولت</b>\n` +
+    `/wallet — نمایش موجودی و آیدی ولت\n\n` +
+    `<b>🔁 انتقال</b>\n` +
+    `• ریپلای روی پیام کسی + عدد (مثل <code>10k</code>) — درخواست انتقال با تایید دکمه‌ای\n` +
+    `• <code>انتقال 10k به 12345678</code> — انتقال با آیدی ولت\n\n` +
+    `<b>🧾 قبض</b>\n` +
+    `• <code>ساخت قبض 10k دپث 5 بار مصرف</code> — ساخت قبض با لینک اختصاصی\n\n` +
+    `پسوندهای مجاز برای مبلغ: <code>k</code>/<code>کا</code>/<code>هزار</code> (هزار)، <code>m</code>/<code>م</code>/<code>میلیون</code>، <code>b</code>/<code>ب</code>/<code>میلیارد</code>`;
+
+  if (adminStatus) {
+    text +=
+      `\n\n<b>🛡 دستورات ادمین</b>\n` +
+      `• <code>add ton 10k</code> (ریپلای یا با آیدی) — شارژ کاربر\n` +
+      `• <code>کسر 10k</code> (ریپلای یا با آیدی) — کسر از کاربر`;
+  }
+  if (ownerStatus) {
+    text +=
+      `\n\n<b>👑 دستورات مالک</b>\n` +
+      `• <code>/makecode</code> (ریپلای یا با آیدی) — ساخت رمز یکبار مصرف ادمینی\n` +
+      `• <code>/addadmin</code> (ریپلای یا با آیدی) — افزودن مستقیم ادمین\n` +
+      `• <code>/deladmin</code> (ریپلای یا با آیدی) — حذف ادمین`;
+  }
+
+  await ctx.reply(text, { parse_mode: "HTML" });
+});
+
+// ==========================================================================
+// 6) مدیریت ادمین‌ها: /makecode ، /addadmin و /deladmin
+// ==========================================================================
+
+bot.command("makecode", async (ctx) => {
+  if (!(await isOwner(ctx.from.id))) {
+    return ctx.reply("⛔️ فقط مالک ربات می‌تونه کد ادمینی بسازه.");
+  }
+
+  const targetId = await resolveTargetId(ctx);
+  if (!targetId) {
+    return ctx.reply("❗️ روی پیام کاربر مورد نظر ریپلای کن یا آیدی عددی بده.\nمثال: <code>/makecode 12345678</code>", { parse_mode: "HTML" });
+  }
+
+  // تولید کد ۱۰ رقمی تصادفی
+  const code = Math.floor(1000000000 + Math.random() * 9000000000).toString();
+
+  // حذف کدهای قبلی این کاربر (در صورت وجود) و ثبت کد جدید
+  await supabase.from("admin_codes").delete().eq("user_id", targetId);
+  const { error } = await supabase.from("admin_codes").insert({ code, user_id: targetId });
+
+  if (error) {
+    console.error(error);
+    return ctx.reply("❌ خطا در ساخت رمز یکبار مصرف.");
+  }
+
+  await ctx.reply(
+    `🔑 <b>رمز یکبار مصرف ادمینی ساخته شد</b>\n\n` +
+    `👤 برای کاربر: <code>${targetId}</code>\n` +
+    `🔐 کد ۱۰ رقمی: <code>${code}</code>\n\n` +
+    `این کد رو به کاربر بده. کاربر باید همین کد ۱۰ رقمی رو به پیوی ربات بفرسته.`,
+    { parse_mode: "HTML" }
+  );
+});
 
 bot.command("addadmin", async (ctx) => {
   if (!(await isOwner(ctx.from.id))) {
@@ -229,7 +296,7 @@ async function resolveTargetId(ctx) {
 }
 
 // ==========================================================================
-// 7) هندلر اصلی متن‌ها: انتقال / ساخت قبض / شارژ و کسر ادمین
+// 7) هندلر اصلی متن‌ها: بررسی کد ۱۰ رقمی / انتقال / ساخت قبض / شارژ و کسر ادمین
 // ==========================================================================
 
 const RE_TRANSFER_TO_ID = new RegExp(`^انتقال\\s+(${AMOUNT_TOKEN})\\s+به\\s+(\\d+)$`, "i");
@@ -240,6 +307,30 @@ const RE_JUST_NUMBER = new RegExp(`^${AMOUNT_TOKEN}$`, "i");
 
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
+
+  // ---- ۷.۰ بررسی ورود رمز ۱۰ رقمی ادمینی ----
+  if (/^\d{10}$/.test(text)) {
+    const { data: record } = await supabase
+      .from("admin_codes")
+      .select("*")
+      .eq("code", text)
+      .maybeSingle();
+
+    if (record) {
+      if (record.user_id !== ctx.from.id) {
+        return ctx.reply("⛔️ این کد برای آیدی تلگرام شما صادر نشده است!");
+      }
+
+      // افزودن به لیست ادمین‌ها
+      await ensureUser(ctx.from);
+      await supabase.from("admins").upsert({ user_id: ctx.from.id, added_by: OWNER_ID });
+
+      // مصرف و حذف کد یکبار مصرف
+      await supabase.from("admin_codes").delete().eq("code", text);
+
+      return ctx.reply("🎉 <b>تبریک!</b> شما با موفقیت به عنوان ادمین ربات ارتقا یافتید.", { parse_mode: "HTML" });
+    }
+  }
 
   // ---- ۷.۱ انتقال با ریپلای روی پیام + عدد خالی (10k / ۱۰کا / 5000) ----
   if (ctx.message.reply_to_message && RE_JUST_NUMBER.test(text)) {
@@ -554,4 +645,3 @@ module.exports = async (req, res) => {
     }
   }
 };
-      

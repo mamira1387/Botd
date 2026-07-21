@@ -239,8 +239,14 @@ bot.command("wallet", async (ctx) => {
   const argRaw = ctx.match?.trim();
 
   if (reply) {
-    const replyId = getForwardedUserId(reply) || reply.from?.id;
-    if (replyId) targetId = replyId;
+    const forwardedId = getForwardedUserId(reply);
+    if (forwardedId) {
+      targetId = forwardedId;
+      await ensureUser({ id: forwardedId });
+    } else if (reply.from) {
+      targetId = reply.from.id;
+      await ensureUser(reply.from); // چون اطلاعات کامل این کاربر رو از خود پیام ریپلای‌شده داریم، همین‌جا ثبتش می‌کنیم
+    }
   } else if (argRaw) {
     const resolved = await resolveIdentifierToken(argRaw);
     if (resolved) targetId = resolved;
@@ -367,8 +373,14 @@ async function resolveTargetId(ctx) {
   const reply = ctx.message?.reply_to_message;
   if (reply) {
     const forwardedId = getForwardedUserId(reply);
-    if (forwardedId) return forwardedId;
-    if (reply.from?.id) return reply.from.id;
+    if (forwardedId) {
+      await ensureUser({ id: forwardedId });
+      return forwardedId;
+    }
+    if (reply.from) {
+      await ensureUser(reply.from); // ثبت خودکار با اطلاعات کامل پروفایل از روی خود پیام ریپلای‌شده
+      return reply.from.id;
+    }
   }
   const parts = ctx.message.text.trim().split(/\s+/);
   const last = parts[parts.length - 1];
@@ -439,7 +451,15 @@ bot.on("message:text", async (ctx) => {
   // ---- ۷.۰.۱ نمایش ولت با ریپلای + نوشتن «ولت» ----
   if (ctx.message.reply_to_message && RE_WALLET_KEYWORD.test(text)) {
     const reply = ctx.message.reply_to_message;
-    const targetId = getForwardedUserId(reply) || reply.from?.id;
+    const forwardedId = getForwardedUserId(reply);
+    let targetId = null;
+    if (forwardedId) {
+      targetId = forwardedId;
+      await ensureUser({ id: forwardedId });
+    } else if (reply.from) {
+      targetId = reply.from.id;
+      await ensureUser(reply.from);
+    }
     if (!targetId) {
       return ctx.reply("❗️ نتونستم آیدی این کاربر رو تشخیص بدم.");
     }
@@ -467,6 +487,8 @@ bot.on("message:text", async (ctx) => {
       if (forwardedId) {
         await ensureUser({ id: forwardedId });
         toUser = await getUser(forwardedId);
+      } else if (toUser) {
+        await ensureUser(toUser); // ثبت خودکار کاربر مقصد از روی اطلاعات همون پیام ریپلای‌شده
       }
       if (!toUser) return ctx.reply("❗️ نتونستم آیدی این کاربر رو تشخیص بدم.");
       await handleTransferRequest(ctx, toUser, amount);

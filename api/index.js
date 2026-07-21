@@ -1,5 +1,5 @@
 // ==========================================================================
-// Depth TON Bot — index.js (Smart Self-Target Version)
+// Depth TON Bot — index.js (Final Clean Version)
 // ==========================================================================
 
 const { Bot, InlineKeyboard, webhookCallback } = require("grammy");
@@ -151,14 +151,14 @@ bot.command("start", async (ctx) => {
 });
 
 // ==========================================================================
-// 5) دستور /wallet و /ولت (هوشمند: اگر آرگومان نباشد، خود کاربر)
+// 5) دستور /wallet و /ولت
 // ==========================================================================
 bot.command("wallet", async (ctx) => await handleWalletCommand(ctx));
 bot.command("ولت", async (ctx) => await handleWalletCommand(ctx));
 
 async function handleWalletCommand(ctx) {
   await ensureUser(ctx.from);
-  let targetId = ctx.from.id; // پیش‌فرض: خود کاربر
+  let targetId = ctx.from.id; 
 
   const reply = ctx.message.reply_to_message;
   const argRaw = ctx.match?.trim();
@@ -174,29 +174,27 @@ async function handleWalletCommand(ctx) {
       targetId = replyUser.id;
       await ensureUser(replyUser);
     }
-    // اگر ریپلای روی پیام ربات بود، targetId تغییر نمی‌کند و همان ctx.from.id باقی می‌ماند
   } else if (argRaw) {
     const resolved = await resolveIdentifierToken(argRaw);
     if (resolved) {
       targetId = resolved;
     } else {
-      return ctx.reply("❗️ User not found. Enter a valid numeric ID or @username.\nکاربر پیدا نشد. آیدی یا یوزرنیم معتبر وارد کنید.");
+      return ctx.reply("❗️ User not found. Enter a valid numeric ID or @username.");
     }
   }
-  // اگر نه ریپلای بود و نه آرگومان، targetId همان ctx.from.id است (یعنی خود کاربر)
 
   const user = await getUser(targetId);
   if (!user) {
     await ensureUser({ id: targetId });
     const retryUser = await getUser(targetId);
-    if (!retryUser) return ctx.reply("❗️ This user is not registered.\nاین کاربر ثبت نشده است.");
-    return ctx.reply(`👛 <b>User Wallet</b>\n🆔 ID: <code>${targetId}</code>\n💰 Balance: <b>0</b> (Just registered)`, { parse_mode: "HTML" });
+    if (!retryUser) return ctx.reply("❗️ This user is not registered.");
+    return ctx.reply(`👛 <b>User Wallet</b>\n🆔 ID: <code>${targetId}</code>\n💰 Balance: <b>0</b>`, { parse_mode: "HTML" });
   }
 
   const isSelf = targetId === ctx.from.id;
-  await ctx.reply(    `👛 <b>${isSelf ? "Your Wallet | کیف پول شما" : "User Wallet | کیف پول کاربر"}</b>\n\n` +
-    `🆔 ID: <code>${targetId}</code>\n` +
-    (user.username ? `👤 Username: @${user.username}\n` : "") +
+  await ctx.reply(
+    `👛 <b>${isSelf ? "Your Wallet | کیف پول شما" : "User Wallet | کیف پول کاربر"}</b>\n\n` +
+    `🆔 ID: <code>${targetId}</code>\n` +    (user.username ? `👤 Username: @${user.username}\n` : "") +
     `💰 Balance | موجودی: <b>${fmt(user.balance)}</b>`,
     { parse_mode: "HTML" }
   );
@@ -213,8 +211,7 @@ bot.command("help", async (ctx) => {
     `📖 <b>Depth TON Bot Guide | راهنما</b>\n\n` +
     `<b>👛 Wallet | ولت</b>\n` +
     `• /wallet or /ولت → Shows YOUR wallet\n` +
-    `• Reply to user + /wallet → Shows THEIR wallet\n` +
-    `• /wallet @username → Shows specific user\n\n` +
+    `• Reply to user + /wallet → Shows THEIR wallet\n\n` +
     `<b>🔁 Transfer | انتقال</b>\n` +
     `• Reply to user + <code>10k</code> or <code>transfer 10k</code>\n` +
     `• <code>transfer 10k to @username</code>\n\n` +
@@ -226,7 +223,6 @@ bot.command("help", async (ctx) => {
   if (adminStatus) {
     text += `\n\n<b>🛡 Admin Commands | دستورات ادمین</b>\n` +
       `• <code>add 10k</code> or <code>شارژ 10k</code> → Adds to YOUR wallet\n` +
-      `• <code>add 10k to @user</code> → Adds to specific user\n` +
       `• <code>deduct 10k</code> or <code>کسر 10k</code> → Deducts from YOUR wallet`;
   }
   if (ownerStatus) {
@@ -244,10 +240,10 @@ bot.command("makecode", async (ctx) => {
   if (!(await isOwner(ctx.from.id))) return ctx.reply("⛔️ Only the bot owner can create admin codes.");
   const targetId = await resolveTargetId(ctx);
   if (!targetId) return ctx.reply("❗️ Reply to a user or provide an ID/Username.", { parse_mode: "HTML" });
+
   const code = Math.floor(1000000000 + Math.random() * 9000000000).toString();
   await supabase.from("admin_codes").delete().eq("user_id", targetId);
-  const { error } = await supabase.from("admin_codes").insert({ code, user_id: targetId });
-  if (error) return ctx.reply("❌ Error creating code.");
+  const { error } = await supabase.from("admin_codes").insert({ code, user_id: targetId });  if (error) return ctx.reply("❌ Error creating code.");
 
   await ctx.reply(`🔑 <b>Admin Code Created</b>\n👤 User: <code>${targetId}</code>\n🔐 Code: <code>${code}</code>`, { parse_mode: "HTML" });
 });
@@ -291,12 +287,12 @@ async function resolveTargetId(ctx) {
 }
 
 // ==========================================================================
-// 7) هندلر اصلی متن‌ها (الگوهای منعطف دوزبانه)
+// 7) هندلر اصلی متن‌ها
 // ==========================================================================
+
 const KW = {
   transfer: ["انتقال", "transfer"],
-  to: ["به", "to"],
-  createBill: ["ساخت\\s*قبض", "create\\s*bill", "make\\s*bill"],
+  to: ["به", "to"],  createBill: ["ساخت\\s*قبض", "create\\s*bill", "make\\s*bill"],
   uses: ["بار\\s*مصرف", "uses", "times"],
   unlimited: ["بدون\\s*محدودیت", "unlimited", "no\\s*limit"],
   charge: ["شارژ", "add\\s*ton", "charge", "topup"],
@@ -341,13 +337,12 @@ bot.on("message:text", async (ctx) => {
     if (forwardedId) {
       targetId = forwardedId;
       await ensureUser({ id: forwardedId });
-    } else {      const replyUser = getReplyFromUser(reply);
+    } else {
+      const replyUser = getReplyFromUser(reply);
       if (replyUser) {
         targetId = replyUser.id;
-        await ensureUser(replyUser);
-      }
+        await ensureUser(replyUser);      }
     }
-    // اگر ریپلای روی پیام ربات بود، targetId نال می‌ماند و پایین‌تر هندل می‌شود
     if (!targetId) targetId = ctx.from.id;
 
     const user = await getUser(targetId);
@@ -378,7 +373,7 @@ bot.on("message:text", async (ctx) => {
         await ensureUser(toUser);
       }
 
-      if (!toUser) return ctx.reply("❗️ Could not detect target user. Please reply to a real user or use 'transfer 10k to @username'.");
+      if (!toUser) return ctx.reply("❗️ Could not detect target user.");
       
       await handleTransferRequest(ctx, toUser, amount);
       return;
@@ -390,12 +385,12 @@ bot.on("message:text", async (ctx) => {
   if (mTransfer) {
     const amount = parseAmount(mTransfer[1]);
     const toId = await resolveIdentifierToken(mTransfer[2]);
-    if (!amount) return ctx.reply("❗️ Invalid amount.");    if (!toId) return ctx.reply("❗️ Invalid target user.");
+    if (!amount) return ctx.reply("❗️ Invalid amount.");
+    if (!toId) return ctx.reply("❗️ Invalid target user.");
     if (toId === ctx.from.id) return ctx.reply("❗️ You cannot transfer to yourself.");
     
     await ensureUser({ id: toId });
-    const toUser = await getUser(toId);
-    if (!toUser) return ctx.reply("❗️ Target user is not registered.");
+    const toUser = await getUser(toId);    if (!toUser) return ctx.reply("❗️ Target user is not registered.");
     
     await handleTransferRequest(ctx, { id: toId, username: toUser.username, first_name: toUser.first_name }, amount);
     return;
@@ -421,7 +416,7 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // ---- ۷.۴ شارژ توسط ادمین (هوشمند: اگر آیدی نباشد، خود ادمین) ----
+  // ---- ۷.۴ شارژ توسط ادمین ----
   const mAdd = text.match(RE_ADMIN_ADD);
   if (mAdd) {
     if (!(await isAdmin(ctx.from.id))) return ctx.reply("⛔️ Only admins can add balance.");
@@ -429,33 +424,28 @@ bot.on("message:text", async (ctx) => {
     let targetId = null;
     
     if (mAdd[2]) {
-      // اگر آیدی یا یوزرنیم در متن بود
       targetId = await resolveIdentifierToken(mAdd[2]);
     } else {
-      // اگر آیدی در متن نبود، چک کن ببین ریپلای کرده؟
       const reply = ctx.message.reply_to_message;
       if (reply) {
         const fwdId = getForwardedUserId(reply);
         const repUser = getReplyFromUser(reply);
         targetId = fwdId || repUser?.id || null;
       }
-      // اگر ریپلای هم نکرده بود، targetId نال می‌ماند و پایین‌تر به خود ادمین اختصاص می‌یابد    }
+    }
 
     if (!amount) return ctx.reply("❗️ Invalid amount.");
-    
-    // اگر هنوز targetId نال است، یعنی نه آیدی دادی نه ریپلای کردی -> پس منظور خودت هستی
     if (!targetId) targetId = ctx.from.id;
     
     await ensureUser({ id: targetId });
     const { data: cur } = await supabase.from("users").select("balance").eq("user_id", targetId).single();
-    if (!cur) return ctx.reply("❗️ User not found.");
-    
+    if (!cur) return ctx.reply("❗️ User not found.");    
     await supabase.from("users").update({ balance: cur.balance + amount }).eq("user_id", targetId);
     await ctx.reply(`✅ Added <b>${fmt(amount)}</b> to <code>${targetId}</code>.`, { parse_mode: "HTML" });
     return;
   }
 
-  // ---- ۷.۵ کسر توسط ادمین (هوشمند: اگر آیدی نباشد، خود ادمین) ----
+  // ---- ۷.۵ کسر توسط ادمین ----
   const mSub = text.match(RE_ADMIN_SUB);
   if (mSub) {
     if (!(await isAdmin(ctx.from.id))) return ctx.reply("⛔️ Only admins can deduct balance.");
@@ -474,8 +464,6 @@ bot.on("message:text", async (ctx) => {
     }
 
     if (!amount) return ctx.reply("❗️ Invalid amount.");
-    
-    // اگر هنوز targetId نال است، یعنی نه آیدی دادی نه ریپلای کردی -> پس منظور خودت هستی
     if (!targetId) targetId = ctx.from.id;
 
     const target = await getUser(targetId);
@@ -488,7 +476,8 @@ bot.on("message:text", async (ctx) => {
   }
 
   // ---- ۷.۶ تشخیص پیام فوروارد شده در پیوی توسط ادمین ----
-  if (ctx.chat.type === "private" && (await isAdmin(ctx.from.id))) {    const fwdId = getForwardedUserId(ctx.message);
+  if (ctx.chat.type === "private" && (await isAdmin(ctx.from.id))) {
+    const fwdId = getForwardedUserId(ctx.message);
     if (fwdId) {
       await ensureUser({ id: fwdId });
       const fwdUser = await getUser(fwdId);
@@ -499,8 +488,7 @@ bot.on("message:text", async (ctx) => {
         `Reply to this message with:\n<code>add 10k</code> or <code>deduct 10k</code>`,
         { parse_mode: "HTML" }
       );
-    }
-  }
+    }  }
 });
 
 // ==========================================================================
@@ -537,7 +525,8 @@ async function handleTransferRequest(ctx, toUser, amount) {
 
 bot.callbackQuery(/^tr_confirm_(.+)$/, async (ctx) => {
   const id = ctx.match[1];
-  const { data: pending } = await supabase.from("pending_transfers").select("*").eq("id", id).maybeSingle();  if (!pending || pending.status !== "pending") return ctx.answerCallbackQuery({ text: "Request expired.", show_alert: true });
+  const { data: pending } = await supabase.from("pending_transfers").select("*").eq("id", id).maybeSingle();
+  if (!pending || pending.status !== "pending") return ctx.answerCallbackQuery({ text: "Request expired.", show_alert: true });
   if (pending.from_user_id !== ctx.from.id) return ctx.answerCallbackQuery({ text: "Only sender can confirm.", show_alert: true });
 
   const { data: ok } = await supabase.rpc("transfer_balance", { p_from: pending.from_user_id, p_to: pending.to_user_id, p_amount: pending.amount });
@@ -548,8 +537,7 @@ bot.callbackQuery(/^tr_confirm_(.+)$/, async (ctx) => {
   }
 
   await supabase.from("pending_transfers").update({ status: "confirmed" }).eq("id", id);
-  await ctx.editMessageText(`✅ <b>Transfer Successful</b>\nFrom: <code>${pending.from_user_id}</code>\nTo: <code>${pending.to_user_id}</code>\nAmount: <b>${fmt(pending.amount)}</b>`, { parse_mode: "HTML" });
-  await ctx.answerCallbackQuery({ text: "Transferred ✅" });
+  await ctx.editMessageText(`✅ <b>Transfer Successful</b>\nFrom: <code>${pending.from_user_id}</code>\nTo: <code>${pending.to_user_id}</code>\nAmount: <b>${fmt(pending.amount)}</b>`, { parse_mode: "HTML" });  await ctx.answerCallbackQuery({ text: "Transferred ✅" });
 });
 
 bot.callbackQuery(/^tr_cancel_(.+)$/, async (ctx) => {
@@ -586,7 +574,8 @@ function billText(bill, payers) {
   const payersList = payers.length
     ? payers.map((p) => {
         const info = p.users || {};
-        const label = info.username ? `@${info.username}` : (info.first_name || "User | کاربر");        return `• ${label}`;
+        const label = info.username ? `@${info.username}` : (info.first_name || "User | کاربر");
+        return `• ${label}`;
       }).join("\n")
     : "— No payments yet | هنوز کسی پرداخت نکرده —";
 
@@ -597,8 +586,7 @@ function billText(bill, payers) {
       ? `🔁 Status: <b>Unlimited total</b> (Each person can pay only once)\nوضعیت: بدون محدودیت تعداد کل (هر نفر فقط یک‌بار)\n\n`
       : `🔁 Remaining | باقی‌مانده: <b>${remaining} of ${bill.max_uses}</b>\n\n`) +
     `👥 <b>Payers | پرداخت‌کنندگان (${bill.used_count}):</b>\n${payersList}` +
-    (!isUnlimited && remaining <= 0 ? "\n\n🔒 This bill is now inactive." : "")
-  );
+    (!isUnlimited && remaining <= 0 ? "\n\n🔒 This bill is now inactive." : "")  );
 }
 
 async function payBill(ctx, billId) {
@@ -635,7 +623,8 @@ async function payBill(ctx, billId) {
     const updatedBill = { ...bill, used_count: newUsedCount };
     try {
       const kb = isNowInactive ? undefined : new InlineKeyboard().url("💳 Pay Bill | پرداخت", `https://t.me/${BOT_USERNAME}?start=bill_${billId}`);
-      await bot.api.editMessageText(bill.chat_id, bill.message_id, billText(updatedBill, payersWithInfo), { parse_mode: "HTML", reply_markup: kb });    } catch (e) { console.error("editMessageText error:", e.message); }
+      await bot.api.editMessageText(bill.chat_id, bill.message_id, billText(updatedBill, payersWithInfo), { parse_mode: "HTML", reply_markup: kb });
+    } catch (e) { console.error("editMessageText error:", e.message); }
   }
 }
 
@@ -646,8 +635,7 @@ const handleUpdate = webhookCallback(bot, "std/http");
 
 module.exports = async (req, res) => {
   if (req.method === "GET") {
-    res.status(200).json({ status: "ok", bot: "Depth TON Bot", message: "Webhook is alive." });
-    return;
+    res.status(200).json({ status: "ok", bot: "Depth TON Bot", message: "Webhook is alive." });    return;
   }
   if (req.method !== "POST") {
     res.status(405).send("Method Not Allowed");

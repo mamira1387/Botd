@@ -218,12 +218,15 @@ bot.command("help", async (ctx) => {
     `<b>🧾 Bill | قبض</b>\n` +
     `• <code>create bill 10k for 5 uses</code>\n` +
     `• <code>make bill 10k unlimited</code>\n\n` +
+    `<b>📊 Stats | آمار</b>\n` +
+    `• <code>آمار</code> or <code>stats</code> → Today's message leaderboard for this group\n\n` +
     `<i>Supported amount suffixes: k, m, b, هزار, میلیون, میلیارد</i>`;
 
   if (adminStatus) {
     text += `\n\n<b>🛡 Admin Commands | دستورات ادمین</b>\n` +
-      `• <code>add 10k</code> or <code>شارژ 10k</code> → Adds to YOUR wallet\n` +
-      `• <code>deduct 10k</code> or <code>کسر 10k</code> → Deducts from YOUR wallet`;
+      `• <code>add 10k</code> or <code>شارژ 10k</code> → Adds to a wallet\n` +
+      `• <code>deduct 10k</code> or <code>کسر 10k</code> → Deducts from a wallet\n` +
+      `• <code>ساخت جایزه 100k</code> → Creates a one-time claim prize`;
   }
   if (ownerStatus) {
     text += `\n\n<b>👑 Owner Commands | دستورات مالک</b>\n` +
@@ -287,6 +290,130 @@ async function resolveTargetId(ctx) {
 }
 
 // ==========================================================================
+// 6.1) آمار پیام‌های روزانه + جایزه‌ی نفر اول
+// ==========================================================================
+
+const RE_STATS_KEYWORD = /^(?:آمار|stats)$/i;
+const DAILY_STATS_REWARD = 500000;
+
+async function incrementMessageCount(userId, chatId) {
+  const today = new Date().toISOString().slice(0, 10);
+  try {
+    await supabase.rpc("increment_message_count", { p_user_id: userId, p_chat_id: chatId, p_day: today });
+  } catch (e) {
+    console.error("incrementMessageCount error:", e);
+  }
+}
+
+async function handleStats(ctx) {
+  const today = new Date().toISOString().slice(0, 10);
+
+  const { data: rows } = await supabase
+    .from("message_stats")
+    .select("user_id, count, users(username, first_name)")
+    .eq("chat_id", ctx.chat.id)
+    .eq("day", today)
+    .order("count", { ascending: false })
+    .limit(15);
+
+  if (!rows || rows.length === 0) {
+    return ctx.reply("📊 امروز هنوز کسی توی این گروه پیام نداده.");
+  }
+
+  const lines = rows.map((r, i) => {
+    const info = r.users || {};
+    const label = info.username ? `@${info.username}` : (info.first_name || "کاربر");
+    return `${i + 1}. ${label} — ${r.count} پیام`;
+  });
+
+  const topUserId = rows[0].user_id;
+
+  const { data: existingReward } = await supabase
+    .from("daily_stat_rewards")
+    .select("*")
+    .eq("chat_id", ctx.chat.id)
+    .eq("day", today)
+    .maybeSingle();
+
+  let rewardLine;
+  if (existingReward) {
+    rewardLine = `🏆 جایزه‌ی امروز قبلاً به <code>${existingReward.user_id}</code> داده شده.`;
+  } else {
+    await ensureUser({ id: topUserId });
+    const { data: cur } = await supabase.from("users").select("balance").eq("user_id", topUserId).single();
+    await supabase.from("users").update({ balance: cur.balance + DAILY_STATS_REWARD }).eq("user_id", topUserId);
+    await supabase.from("daily_stat_rewards").insert({ chat_id: ctx.chat.id, day: today, user_id: topUserId });
+    rewardLine = `🏆 نفر اول (<code>${topUserId}</code>) جایزه‌ی <b>${fmt(DAILY_STATS_REWARD)}</b> دپث تون گرفت! 🎉`;
+  }
+
+  await ctx.reply(
+    `📊 <b>آمار پیام‌های امروز</b>\n\n${lines.join("\n")}\n\n${rewardLine}`,
+    { parse_mode: "HTML" }
+  );
+}
+
+// ==========================================================================
+// 6.2) جایزه‌ی شانسی (رندوم یا ساخته‌شده توسط ادمین)
+// ==========================================================================
+
+const RE_CREATE_PRIZE = /^ساخت\s+جایزه\s+([\d۰-۹.,]+\s*(?:میلیارد|میلیون|هزار|کا|ک|k|m|b|م|ب)?)$/i;
+const RANDOM_GIVEAWAY_CHANCE = 0.01; // ۱٪ شانس هر پیام گروه
+const RANDOM_GIVEAWAY_AMOUNT = 100000;
+
+async function createGiveaway(ctx, amount, createdBy) {
+  const { data: giveaway, error } = await supabase
+    .from("giveaways")
+    .insert({ chat_id: ctx.chat.id, amount, created_by: createdBy })
+    .select()
+    .single();
+  if (error) {
+    console.error("createGiveaway error:", error);
+    return;
+  }
+
+  const kb = new InlineKeyboard().text("🎁 دریافت جایزه", `giveaway_claim_${giveaway.id}`);
+  const sent = await ctx.api.sendMessage(
+    ctx.chat.id,
+    `🎉 <b>جایزه‌ی شانسی!</b>\n\nاولین نفری که دکمه رو بزنه <b>${fmt(amount)}</b> دپث تون می‌بره!`,
+    { parse_mode: "HTML", reply_markup: kb }
+  );
+  await supabase.from("giveaways").update({ message_id: sent.message_id }).eq("id", giveaway.id);
+}
+
+bot.callbackQuery(/^giveaway_claim_(.+)$/, async (ctx) => {
+  const id = ctx.match[1];
+  const { data: giveaway } = await supabase.from("giveaways").select("*").eq("id", id).maybeSingle();
+  if (!giveaway || giveaway.is_claimed) {
+    return ctx.answerCallbackQuery({ text: "این جایزه قبلاً گرفته شده!", show_alert: true });
+  }
+
+  // آپدیت شرطی: فقط اگه هنوز claim نشده باشه (جلوگیری از برداشت هم‌زمان دو نفر)
+  const { data: updated } = await supabase
+    .from("giveaways")
+    .update({ is_claimed: true, claimed_by: ctx.from.id })
+    .eq("id", id)
+    .eq("is_claimed", false)
+    .select()
+    .maybeSingle();
+
+  if (!updated) {
+    return ctx.answerCallbackQuery({ text: "همین الان توسط یه نفر دیگه گرفته شد!", show_alert: true });
+  }
+
+  await ensureUser(ctx.from);
+  const { data: cur } = await supabase.from("users").select("balance").eq("user_id", ctx.from.id).single();
+  await supabase.from("users").update({ balance: cur.balance + giveaway.amount }).eq("user_id", ctx.from.id);
+
+  try {
+    await ctx.api.deleteMessage(giveaway.chat_id, giveaway.message_id);
+  } catch (e) {
+    console.error("delete giveaway message error:", e.message);
+  }
+
+  await ctx.answerCallbackQuery({ text: `🎉 تبریک! ${fmt(giveaway.amount)} دپث تون گرفتی!`, show_alert: true });
+});
+
+// ==========================================================================
 // 7) هندلر اصلی متن‌ها
 // ==========================================================================
 
@@ -317,6 +444,16 @@ bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
   await ensureUser(ctx.from);
 
+  // شمارش پیام‌های امروز برای آمار گروه (فقط گروه/سوپرگروه، فقط کاربر واقعی نه بات)
+  if (!ctx.from.is_bot && (ctx.chat.type === "group" || ctx.chat.type === "supergroup")) {
+    await incrementMessageCount(ctx.from.id, ctx.chat.id);
+
+    // شانس تصادفی برای جایزه‌ی شانسی (فقط وقتی متن پیام یه دستور شناخته‌شده نیست، تا مزاحم فلوهای دیگه نشه)
+    if (Math.random() < RANDOM_GIVEAWAY_CHANCE) {
+      await createGiveaway(ctx, RANDOM_GIVEAWAY_AMOUNT, null);
+    }
+  }
+
   // ---- ۷.۰ بررسی ورود رمز ۱۰ رقمی ادمینی ----
   if (/^\d{10}$/.test(text)) {
     const { data: record } = await supabase.from("admin_codes").select("*").eq("code", text).maybeSingle();
@@ -326,6 +463,22 @@ bot.on("message:text", async (ctx) => {
       await supabase.from("admin_codes").delete().eq("code", text);
       return ctx.reply("🎉 <b>Success!</b> You have been promoted to bot admin.", { parse_mode: "HTML" });
     }
+  }
+
+  // ---- ۷.۰.۰ آمار روزانه ----
+  if (RE_STATS_KEYWORD.test(text) && (ctx.chat.type === "group" || ctx.chat.type === "supergroup")) {
+    await handleStats(ctx);
+    return;
+  }
+
+  // ---- ۷.۰.۲ ساخت جایزه توسط ادمین: "ساخت جایزه 100k" ----
+  const mPrize = text.match(RE_CREATE_PRIZE);
+  if (mPrize) {
+    if (!(await isAdmin(ctx.from.id))) return ctx.reply("⛔️ فقط ادمین‌ها می‌تونن جایزه بسازن.");
+    const amount = parseAmount(mPrize[1]);
+    if (!amount) return ctx.reply("❗️ مبلغ جایزه نامعتبر است.");
+    await createGiveaway(ctx, amount, ctx.from.id);
+    return;
   }
 
   // ---- ۷.۰.۱ نمایش ولت با ریپلای یا کلمه کلیدی ----

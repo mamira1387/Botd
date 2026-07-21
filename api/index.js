@@ -629,22 +629,31 @@ async function payBill(ctx, billId) {
 }
 
 // ==========================================================================
-// 10) خروجی سازگار با Vercel Serverless Function
+// 10) خروجی سازگار با Vercel Serverless Function (اصلاح شده)
 // ==========================================================================
-const handleUpdate = webhookCallback(bot, "std/http");
+
+// تغییر مهم: استفاده از "next-js" به جای "std/http" برای سازگاری با Vercel
+const handleUpdate = webhookCallback(bot, "next-js");
 
 module.exports = async (req, res) => {
+  // جلوگیری از ارور هنگام تست دستی در مرورگر (GET)
   if (req.method === "GET") {
-    res.status(200).json({ status: "ok", bot: "Depth TON Bot", message: "Webhook is alive." });    return;
-  }
-  if (req.method !== "POST") {
-    res.status(405).send("Method Not Allowed");
+    res.status(200).json({ status: "ok", bot: "Depth TON Bot", message: "Webhook is alive." });
     return;
   }
+
+  if (req.method !== "POST") {
+    res.status(405).json({ error: "Method not allowed" });
+    return;
+  }
+
   try {
     await handleUpdate(req, res);
   } catch (err) {
     console.error("Webhook error:", err);
-    if (!res.headersSent) res.status(200).json({ ok: true });
+    // همیشه به تلگرام ۲۰۰ برگردان تا پیام‌ها در صف نمانند
+    if (!res.headersSent) {
+      res.status(200).json({ ok: true });
+    }
   }
 };

@@ -445,35 +445,7 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // ---- ۷.۵ کسر توسط ادمین ----
-  const mSub = text.match(RE_ADMIN_SUB);
-  if (mSub) {
-    if (!(await isAdmin(ctx.from.id))) return ctx.reply("⛔️ Only admins can deduct balance.");
-    const amount = parseAmount(mSub[1]);
-    let targetId = null;
-    
-    if (mSub[2]) {
-      targetId = await resolveIdentifierToken(mSub[2]);
-    } else {
-      const reply = ctx.message.reply_to_message;
-      if (reply) {
-        const fwdId = getForwardedUserId(reply);
-        const repUser = getReplyFromUser(reply);
-        targetId = fwdId || repUser?.id || null;
-      }
-    }
-
-    if (!amount) return ctx.reply("❗️ Invalid amount.");
-    if (!targetId) targetId = ctx.from.id;
-
-    const target = await getUser(targetId);
-    if (!target) return ctx.reply("❗️ User not found.");
-    if (target.balance < amount) return ctx.reply("❗️ Insufficient balance.");
-    
-    await supabase.from("users").update({ balance: target.balance - amount }).eq("user_id", targetId);
-    await ctx.reply(`✅ Deducted <b>${fmt(amount)}</b> from <code>${targetId}</code>.`, { parse_mode: "HTML" });
-    return;
-  }
+  
 
   // ---- ۷.۶ تشخیص پیام فوروارد شده در پیوی توسط ادمین ----
   if (ctx.chat.type === "private" && (await isAdmin(ctx.from.id))) {
@@ -490,7 +462,61 @@ bot.on("message:text", async (ctx) => {
       );
     }  }
 });
+// ---- ۷.۵ کسر توسط ادمین (اصلاح شده برای پایداری در Vercel) ----
+  const mSub = text.match(RE_ADMIN_SUB);
+  if (mSub) {
+    if (!(await isAdmin(ctx.from.id))) return ctx.reply("⛔️ Only admins can deduct balance.");
+    
+    const amount = parseAmount(mSub[1]);
+    let targetId = null;
+    
+    // تشخیص هدف: آیدی در متن، ریپلای، یا خود ادمین
+    if (mSub[2]) {
+      targetId = await resolveIdentifierToken(mSub[2]);
+    } else {
+      const reply = ctx.message.reply_to_message;
+      if (reply) {
+        const fwdId = getForwardedUserId(reply);
+        const repUser = getReplyFromUser(reply);
+        targetId = fwdId || repUser?.id || null;
+      }
+    }
 
+    if (!amount) return ctx.reply("❗️ Invalid amount.");
+    if (!targetId) targetId = ctx.from.id; // اگر کسی مشخص نبود، از خود ادمین کسر کن
+
+    // دریافت موجودی فعلی برای بررسی
+    const target = await getUser(targetId);
+    if (!target) return ctx.reply("❗️ User not found.");
+    if (target.balance < amount) return ctx.reply("❗️ Insufficient balance.");
+
+    // استفاده از تابع RPC برای اطمینان از انجام تراکنش
+    // نکته: برای کسر، ما مبلغ را به آیدی "0" (بانک مرکزی/سیستم) انتقال می‌دهیم تا از حساب کاربر خارج شود
+    // یا می‌توانیم مستقیماً بالانس را کم کنیم اما با قفل مناسب.
+    // اینجا از روش مستقیم اما با بررسی مجدد استفاده می‌کنیم:
+    
+    const { error } = await supabase
+      .from("users")
+      .update({ balance: target.balance - amount })
+      .eq("user_id", targetId)
+      .eq("balance", target.balance); // این شرط باعث می‌شود فقط اگر بالانس تغییر نکرده باشد آپدیت شود (جلوگیری از Race Condition)
+
+    if (error) {
+      console.error("Deduct error:", error);
+      return ctx.reply("❌ Error processing deduction. Please try again.");
+    }
+
+    // بررسی نهایی: مطمئن شویم پول واقعاً کم شده
+    const { data: finalCheck } = await supabase.from("users").select("balance").eq("user_id", targetId).single();
+    
+    if (finalCheck && finalCheck.balance === target.balance - amount) {
+      await ctx.reply(`✅ Deducted <b>${fmt(amount)}</b> from <code>${targetId}</code>. New Balance: ${fmt(finalCheck.balance)}`, { parse_mode: "HTML" });
+    } else {
+      // اگر بالانس تغییر نکرده بود، یعنی مشکلی در دیتابیس پیش آمده
+      await ctx.reply("⚠️ Deduction command received but balance didn't update. Check database logs.");
+    }
+    return;
+  }
 // ==========================================================================
 // 8) انتقال با تایید دکمه شیشه‌ای
 // ==========================================================================

@@ -141,6 +141,62 @@ function fmt(n) {
 }
 
 // ==========================================================================
+// 2.1) تشخیص پیام فوروارد شده + یافتن آیدی از یوزرنیم
+// ==========================================================================
+
+/**
+ * اگه پیام فوروارد شده باشه، آیدی عددی فرستنده‌ی اصلی رو برمی‌گردونه (نه کسی که فوروارد کرده).
+ * هم فرمت جدید Bot API (forward_origin) و هم فرمت قدیمی (forward_from) رو پشتیبانی می‌کنه.
+ */
+function getForwardedUserId(message) {
+  if (!message) return null;
+  if (message.forward_origin && message.forward_origin.type === "user" && message.forward_origin.sender_user) {
+    return message.forward_origin.sender_user.id;
+  }
+  if (message.forward_from) {
+    return message.forward_from.id;
+  }
+  return null;
+}
+
+/**
+ * یوزرنیم (با یا بدون @) رو به آیدی عددی تبدیل می‌کنه.
+ * اول توی دیتابیس خودمون می‌گرده (کاربرهایی که قبلاً با ربات تعامل داشتن)،
+ * اگه پیدا نشد از خود API تلگرام می‌پرسه (فقط برای یوزرنیم‌های عمومی جواب می‌ده).
+ */
+async function resolveIdByUsername(usernameRaw) {
+  const username = usernameRaw.replace(/^@/, "").trim();
+  if (!username) return null;
+
+  const { data } = await supabase
+    .from("users")
+    .select("user_id")
+    .ilike("username", username)
+    .maybeSingle();
+  if (data) return data.user_id;
+
+  try {
+    const chat = await bot.api.getChat(`@${username}`);
+    if (chat && chat.id) {
+      await ensureUser({ id: chat.id, username: chat.username, first_name: chat.first_name });
+      return chat.id;
+    }
+  } catch (e) {
+    // یوزرنیم پیدا نشد یا بات دسترسی نداره
+  }
+  return null;
+}
+
+/** یک توکن متنی (عدد یا @یوزرنیم) رو به آیدی عددی تبدیل می‌کنه */
+async function resolveIdentifierToken(raw) {
+  if (!raw) return null;
+  const cleaned = normalizeDigits(raw.trim());
+  if (/^\d+$/.test(cleaned)) return parseInt(cleaned, 10);
+  if (cleaned.startsWith("@")) return await resolveIdByUsername(cleaned);
+  return null;
+}
+
+// ==========================================================================
 // 3) میان‌افزار: ثبت خودکار کاربر در هر پیام
 // ==========================================================================
 
@@ -208,15 +264,16 @@ bot.command("help", async (ctx) => {
   if (adminStatus) {
     text +=
       `\n\n<b>🛡 دستورات ادمین</b>\n` +
-      `• <code>add ton 10k</code> (ریپلای یا با آیدی) — شارژ کاربر\n` +
-      `• <code>کسر 10k</code> (ریپلای یا با آیدی) — کسر از کاربر`;
+      `• <code>add ton 10k</code> (ریپلای یا با آیدی/یوزرنیم) — شارژ کاربر\n` +
+      `• <code>کسر 10k</code> (ریپلای یا با آیدی/یوزرنیم) — کسر از کاربر\n` +
+      `• یه پیام از کسی رو به پیوی ربات فوروارد کن تا آیدیش رو نشونت بده، بعد روی همون پیام فوروارد شده ریپلای کن و شارژ/کسر کن`;
   }
   if (ownerStatus) {
     text +=
       `\n\n<b>👑 دستورات مالک</b>\n` +
       `• <code>/makecode</code> (ریپلای یا با آیدی) — ساخت رمز یکبار مصرف ادمینی\n` +
-      `• <code>/addadmin</code> (ریپلای یا با آیدی) — افزودن مستقیم ادمین\n` +
-      `• <code>/deladmin</code> (ریپلای یا با آیدی) — حذف ادمین`;
+      `• <code>/addadmin</code> (ریپلای یا با آیدی/یوزرنیم) — افزودن مستقیم ادمین\n` +
+      `• <code>/deladmin</code> (ریپلای یا با آیدی/یوزرنیم) — حذف ادمین`;
   }
 
   await ctx.reply(text, { parse_mode: "HTML" });
@@ -233,7 +290,7 @@ bot.command("makecode", async (ctx) => {
 
   const targetId = await resolveTargetId(ctx);
   if (!targetId) {
-    return ctx.reply("❗️ روی پیام کاربر مورد نظر ریپلای کن یا آیدی عددی بده.\nمثال: <code>/makecode 12345678</code>", { parse_mode: "HTML" });
+    return ctx.reply("❗️ روی پیام کاربر مورد نظر ریپلای کن یا آیدی/یوزرنیم بده.\nمثال: <code>/makecode 12345678</code>", { parse_mode: "HTML" });
   }
 
   // تولید کد ۱۰ رقمی تصادفی
@@ -262,7 +319,7 @@ bot.command("addadmin", async (ctx) => {
     return ctx.reply("⛔️ فقط مالک ربات می‌تونه ادمین اضافه کنه.");
   }
   const targetId = await resolveTargetId(ctx);
-  if (!targetId) return ctx.reply("❗️ روی پیام کاربر مورد نظر ریپلای کن یا آیدی عددی بده.");
+  if (!targetId) return ctx.reply("❗️ روی پیام کاربر مورد نظر ریپلای کن یا آیدی/یوزرنیم بده.");
 
   await ensureUser({ id: targetId });
   const { error } = await supabase
@@ -278,21 +335,24 @@ bot.command("deladmin", async (ctx) => {
     return ctx.reply("⛔️ فقط مالک ربات می‌تونه ادمین حذف کنه.");
   }
   const targetId = await resolveTargetId(ctx);
-  if (!targetId) return ctx.reply("❗️ روی پیام کاربر مورد نظر ریپلای کن یا آیدی عددی بده.");
+  if (!targetId) return ctx.reply("❗️ روی پیام کاربر مورد نظر ریپلای کن یا آیدی/یوزرنیم بده.");
 
   await supabase.from("admins").delete().eq("user_id", targetId);
   await ctx.reply(`✅ دسترسی ادمین کاربر <code>${targetId}</code> حذف شد.`, { parse_mode: "HTML" });
 });
 
-// آیدی هدف رو از ریپلای یا از متن پیام (آخرین عدد) استخراج می‌کنه
+// آیدی هدف رو از ریپلای (با پشتیبانی فوروارد) یا از متن پیام (آخرین توکن: عدد یا @یوزرنیم) استخراج می‌کنه
 async function resolveTargetId(ctx) {
-  if (ctx.message?.reply_to_message?.from?.id) {
-    return ctx.message.reply_to_message.from.id;
+  const reply = ctx.message?.reply_to_message;
+  if (reply) {
+    const forwardedId = getForwardedUserId(reply);
+    if (forwardedId) return forwardedId;
+    if (reply.from?.id) return reply.from.id;
   }
   const parts = ctx.message.text.trim().split(/\s+/);
   const last = parts[parts.length - 1];
-  const num = parseInt(normalizeDigits(last), 10);
-  return isNaN(num) ? null : num;
+  if (last.startsWith("/")) return null; // یعنی هیچ آرگومانی داده نشده
+  return await resolveIdentifierToken(last);
 }
 
 // ==========================================================================
@@ -301,8 +361,8 @@ async function resolveTargetId(ctx) {
 
 const RE_TRANSFER_TO_ID = new RegExp(`^انتقال\\s+(${AMOUNT_TOKEN})\\s+به\\s+(\\d+)$`, "i");
 const RE_CREATE_BILL = new RegExp(`^ساخت\\s+قبض\\s+(${AMOUNT_TOKEN})\\s+دپث\\s+([\\d۰-۹]+)\\s*بار\\s*مصرف$`, "i");
-const RE_ADMIN_ADD = new RegExp(`^add\\s*ton\\s+(${AMOUNT_TOKEN})(?:\\s+(?:به|for)\\s+(\\d+))?$`, "i");
-const RE_ADMIN_SUB = new RegExp(`^کسر\\s+(${AMOUNT_TOKEN})(?:\\s+(?:از)\\s+(\\d+))?$`, "i");
+const RE_ADMIN_ADD = new RegExp(`^add\\s*ton\\s+(${AMOUNT_TOKEN})(?:\\s+(?:به|for)\\s+(\\d+|@[A-Za-z0-9_]{3,32}))?$`, "i");
+const RE_ADMIN_SUB = new RegExp(`^کسر\\s+(${AMOUNT_TOKEN})(?:\\s+(?:از)\\s+(\\d+|@[A-Za-z0-9_]{3,32}))?$`, "i");
 const RE_JUST_NUMBER = new RegExp(`^${AMOUNT_TOKEN}$`, "i");
 
 bot.on("message:text", async (ctx) => {
@@ -365,14 +425,20 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // ---- ۷.۴ شارژ توسط ادمین: "add ton 10k" (ریپلای یا با آیدی) ----
+  // ---- ۷.۴ شارژ توسط ادمین: "add ton 10k" (ریپلای/فوروارد یا با آیدی/یوزرنیم) ----
   const mAdd = text.match(RE_ADMIN_ADD);
   if (mAdd) {
     if (!(await isAdmin(ctx.from.id))) return ctx.reply("⛔️ فقط ادمین‌ها می‌تونن شارژ کنن.");
     const amount = parseAmount(mAdd[1]);
-    const targetId = mAdd[2] ? parseInt(mAdd[2], 10) : ctx.message.reply_to_message?.from?.id;
+    let targetId = null;
+    if (mAdd[2]) {
+      targetId = await resolveIdentifierToken(mAdd[2]);
+    } else {
+      const reply = ctx.message.reply_to_message;
+      if (reply) targetId = getForwardedUserId(reply) || reply.from?.id || null;
+    }
     if (!amount) return ctx.reply("❗️ مبلغ نامعتبر است.");
-    if (!targetId) return ctx.reply("❗️ روی پیام کاربر ریپلای کن یا آیدی رو مشخص کن.");
+    if (!targetId) return ctx.reply("❗️ روی پیام کاربر (یا پیام فوروارد شده‌اش) ریپلای کن یا آیدی/یوزرنیم رو مشخص کن.");
     await ensureUser({ id: targetId });
     // شارژ ادمین از "بانک" است، نه از حساب کسی؛ مستقیم بالانس رو زیاد می‌کنیم
     const { data: cur } = await supabase.from("users").select("balance").eq("user_id", targetId).single();
@@ -381,19 +447,50 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // ---- ۷.۵ کسر توسط ادمین: "کسر 10k" (ریپلای یا با آیدی) ----
+  // ---- ۷.۵ کسر توسط ادمین: "کسر 10k" (ریپلای/فوروارد یا با آیدی/یوزرنیم) ----
   const mSub = text.match(RE_ADMIN_SUB);
   if (mSub) {
     if (!(await isAdmin(ctx.from.id))) return ctx.reply("⛔️ فقط ادمین‌ها می‌تونن کسر کنن.");
     const amount = parseAmount(mSub[1]);
-    const targetId = mSub[2] ? parseInt(mSub[2], 10) : ctx.message.reply_to_message?.from?.id;
+    let targetId = null;
+    if (mSub[2]) {
+      targetId = await resolveIdentifierToken(mSub[2]);
+    } else {
+      const reply = ctx.message.reply_to_message;
+      if (reply) targetId = getForwardedUserId(reply) || reply.from?.id || null;
+    }
     if (!amount) return ctx.reply("❗️ مبلغ نامعتبر است.");
-    if (!targetId) return ctx.reply("❗️ روی پیام کاربر ریپلای کن یا آیدی رو مشخص کن.");
+    if (!targetId) return ctx.reply("❗️ روی پیام کاربر (یا پیام فوروارد شده‌اش) ریپلای کن یا آیدی/یوزرنیم رو مشخص کن.");
     const target = await getUser(targetId);
     if (!target || target.balance < amount) return ctx.reply("❗️ موجودی کاربر کافی نیست.");
     await supabase.from("users").update({ balance: target.balance - amount }).eq("user_id", targetId);
     await ctx.reply(`✅ مبلغ <b>${fmt(amount)}</b> از کیف پول <code>${targetId}</code> کسر شد.`, { parse_mode: "HTML" });
     return;
+  }
+
+  // ---- ۷.۶ تشخیص پیام فوروارد شده در پیوی توسط ادمین (برای افزودن/کسر بعدی با ریپلای) ----
+  if (ctx.chat.type === "private" && (await isAdmin(ctx.from.id))) {
+    const fwdId = getForwardedUserId(ctx.message);
+    if (fwdId) {
+      await ensureUser({ id: fwdId });
+      const fwdUser = await getUser(fwdId);
+      return ctx.reply(
+        `📎 <b>پیام فوروارد شده شناسایی شد</b>\n\n` +
+        `🆔 آیدی عددی: <code>${fwdId}</code>\n` +
+        (fwdUser?.username ? `👤 یوزرنیم: @${fwdUser.username}\n` : "") +
+        `💰 موجودی فعلی: <b>${fmt(fwdUser?.balance ?? 0)}</b>\n\n` +
+        `برای شارژ یا کسر، روی همین پیام ریپلای کن و بنویس:\n` +
+        `<code>add ton 10k</code> یا <code>کسر 10k</code>`,
+        { parse_mode: "HTML" }
+      );
+    }
+    if (ctx.message.forward_sender_name) {
+      return ctx.reply(
+        `⚠️ این پیام فوروارد شده، ولی به‌خاطر تنظیمات حریم خصوصی فرستنده (${ctx.message.forward_sender_name})، آیدی عددیش در دسترس نیست.\n\n` +
+        `راه‌حل: از آیدی عددی یا @یوزرنیم کاربر استفاده کن، مثلاً:\n<code>add ton 10k به @username</code>`,
+        { parse_mode: "HTML" }
+      );
+    }
   }
 });
 

@@ -1,15 +1,18 @@
 {
   "version": 2,
-  "builds": [
-    {
-      "src": "api/*.js",
-      "use": "@vercel/node"
+  "functions": {
+    "api/webhook.js": {
+      "maxDuration": 15
+    },
+    "api/cron/daily-giveaway.js": {
+      "maxDuration": 30
     }
+  },
+  "rewrites": [
+    { "source": "/webhook", "destination": "/api/webhook" }
   ],
-  "routes": [
-    {
-      "src": "/(.*)",
-      "dest": "/api/$1"
-    }
+  "crons": [
+    { "path": "/api/cron/daily-giveaway", "schedule": "0 9 * * *" }
   ]
 }
+

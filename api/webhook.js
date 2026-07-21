@@ -1,6 +1,5 @@
 // ==========================================================================
-// Depth TON Bot — index.js
-// ربات کیف پول تلگرام | grammY + Supabase + Vercel Serverless
+// Depth TON Bot — index.js (Fixed Version)
 // ==========================================================================
 
 const { Bot, InlineKeyboard, webhookCallback } = require("grammy");
@@ -12,13 +11,13 @@ const OWNER_ID = Number(process.env.OWNER_ID);
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY;
 
-if (!BOT_TOKEN) throw new Error("BOT_TOKEN تنظیم نشده است.");
+if (!BOT_TOKEN) throw new Error("BOT_TOKEN is missing.");
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 const bot = new Bot(BOT_TOKEN);
 
 // ==========================================================================
-// 1) توابع کمکی — پارس اعداد فارسی/انگلیسی + پسوند k / کا / هزار
+// 1) توابع کمکی
 // ==========================================================================
 
 function normalizeDigits(str) {
@@ -47,8 +46,8 @@ function parseAmount(raw) {
 
   let value = parseFloat(match[1]);
   if (isNaN(value)) return null;
-  const suffix = match[2];
-  if (suffix) {
+
+  const suffix = match[2];  if (suffix) {
     const multiplier = AMOUNT_SUFFIX_MULTIPLIERS[suffix.toLowerCase()];
     if (!multiplier) return null;
     value *= multiplier;
@@ -60,22 +59,51 @@ function parseAmount(raw) {
 }
 
 // ==========================================================================
-// 2) توابع دیتابیس
+// 2) توابع دیتابیس (اصلاح شده برای پایداری بیشتر)
 // ==========================================================================
 
 async function ensureUser(user) {
-  const { data: existing } = await supabase.from("users").select("*").eq("user_id", user.id).maybeSingle();
+  if (!user || !user.id) return null;
+  
+  // اول چک می‌کنیم آیا وجود دارد؟
+  const { data: existing } = await supabase
+    .from("users")
+    .select("*")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
   if (existing) {
+    // آپدیت اطلاعات در صورت تغییر
     if (existing.username !== user.username || existing.first_name !== user.first_name) {
-      await supabase.from("users").update({ username: user.username || null, first_name: user.first_name || null }).eq("user_id", user.id);
+      await supabase
+        .from("users")
+        .update({ username: user.username || null, first_name: user.first_name || null })
+        .eq("user_id", user.id);
     }
     return existing;
   }
-  const { data: created, error } = await supabase.from("users").insert({
-    user_id: user.id, username: user.username || null, first_name: user.first_name || null, balance: 0,
-  }).select().single();
-  if (error) throw error;
-  return created;
+
+  // اگر نبود، می‌سازیم
+  try {
+    const { data: created, error } = await supabase
+      .from("users")
+      .insert({
+        user_id: user.id,
+        username: user.username || null,
+        first_name: user.first_name || null,
+        balance: 0,
+      })
+      .select()
+      .single();
+
+    if (error) {      console.error("Error creating user:", error);
+      return null;
+    }
+    return created;
+  } catch (e) {
+    console.error("Exception in ensureUser:", e);
+    return null;
+  }
 }
 
 async function getUser(userId) {
@@ -94,8 +122,9 @@ async function isAdmin(userId) {
 function fmt(n) { return Number(n).toLocaleString("en-US"); }
 
 // ==========================================================================
-// 2.1) تشخیص پیام فوروارد شده + یافتن آیدی از یوزرنیم
+// 2.1) تشخیص پیام فوروارد شده + یافتن آیدی
 // ==========================================================================
+
 function getForwardedUserId(message) {
   if (!message) return null;
   if (message.forward_origin && message.forward_origin.type === "user" && message.forward_origin.sender_user) {
@@ -108,15 +137,21 @@ function getForwardedUserId(message) {
 async function resolveIdByUsername(usernameRaw) {
   const username = usernameRaw.replace(/^@/, "").trim();
   if (!username) return null;
+  
+  // اول در دیتابیس خودمان بگردیم
   const { data } = await supabase.from("users").select("user_id").ilike("username", username).maybeSingle();
   if (data) return data.user_id;
+
+  // اگر نبود از تلگرام بپرسیم
   try {
     const chat = await bot.api.getChat(`@${username}`);
-    if (chat && chat.id) {
+    if (chat && chat.id) {      // مهم: اینجا هم کاربر را ثبت می‌کنیم تا دفعه بعد پیدا شود
       await ensureUser({ id: chat.id, username: chat.username, first_name: chat.first_name });
       return chat.id;
     }
-  } catch (e) { /* ignore */ }
+  } catch (e) {
+    // یوزرنیم پیدا نشد یا بات دسترسی ندارد
+  }
   return null;
 }
 
@@ -129,11 +164,12 @@ async function resolveIdentifierToken(raw) {
 }
 
 // ==========================================================================
-// 3) میان‌افزار: ثبت خودکار کاربر
+// 3) میان‌افزار: ثبت خودکار کاربر (بسیار مهم)
 // ==========================================================================
 bot.use(async (ctx, next) => {
   if (ctx.from) {
-    try { await ensureUser(ctx.from); } catch (e) { console.error("ensureUser error:", e); }
+    // سعی می‌کنیم کاربر را ثبت کنیم، اگر خطا داد هم ادامه می‌دهیم تا ربات قطع نشود
+    await ensureUser(ctx.from);
   }
   await next();
 });
@@ -142,10 +178,14 @@ bot.use(async (ctx, next) => {
 // 4) دستور /start
 // ==========================================================================
 bot.command("start", async (ctx) => {
+  // اطمینان از ثبت کاربر فرستنده
+  await ensureUser(ctx.from);
+  
   const payload = ctx.match; 
   if (payload && payload.startsWith("bill_")) {
     await payBill(ctx, payload.replace("bill_", ""));
-    return;  }
+    return;
+  }
   await ctx.reply("👛 به Depth TON Bot خوش اومدی!\n\nبرای دیدن موجودی دستور /wallet یا /ولت رو بزن.\nFor help, send /help");
 });
 
@@ -154,23 +194,42 @@ bot.command("start", async (ctx) => {
 // ==========================================================================
 bot.command("wallet", async (ctx) => await handleWalletCommand(ctx));
 bot.command("ولت", async (ctx) => await handleWalletCommand(ctx));
-
 async function handleWalletCommand(ctx) {
+  // اطمینان از ثبت کاربر فعلی
+  await ensureUser(ctx.from);
+
   let targetId = ctx.from.id;
   const reply = ctx.message.reply_to_message;
   const argRaw = ctx.match?.trim();
 
   if (reply) {
     const replyId = getForwardedUserId(reply) || reply.from?.id;
-    if (replyId) targetId = replyId;
+    if (replyId) {
+      targetId = replyId;
+      // اطمینان از ثبت کاربر هدف
+      await ensureUser(reply.from || { id: replyId }); 
+    }
   } else if (argRaw) {
     const resolved = await resolveIdentifierToken(argRaw);
-    if (resolved) targetId = resolved;
-    else return ctx.reply("❗️ User not found. Enter a valid numeric ID or @username.\nکاربر پیدا نشد. آیدی یا یوزرنیم معتبر وارد کنید.");
+    if (resolved) {
+      targetId = resolved;
+      // اگر از طریق یوزرنیم پیدا شد، ensureUser داخل resolveIdByUsername صدا زده شده
+    } else {
+      return ctx.reply("❗️ User not found. Enter a valid numeric ID or @username.\nکاربر پیدا نشد. آیدی یا یوزرنیم معتبر وارد کنید.");
+    }
   }
 
   const user = await getUser(targetId);
-  if (!user) return ctx.reply("❗️ This user is not registered in the bot.\nاین کاربر در ربات ثبت نشده است.");
+  if (!user) {
+    // یک بار دیگر تلاش می‌کنیم شاید در لحظه ثبت شده باشد
+    await ensureUser({ id: targetId });
+    const retryUser = await getUser(targetId);
+    if (!retryUser) return ctx.reply("❗️ This user is not registered in the bot database.\nاین کاربر در دیتابیس ربات ثبت نشده است.");
+    return ctx.reply(
+        `👛 <b>User Wallet</b>\n🆔 ID: <code>${targetId}</code>\n💰 Balance: <b>0</b> (Just registered)`,
+        { parse_mode: "HTML" }
+    );
+  }
 
   const isSelf = targetId === ctx.from.id;
   await ctx.reply(
@@ -184,8 +243,7 @@ async function handleWalletCommand(ctx) {
 
 // ==========================================================================
 // 5.1) دستور /help
-// ==========================================================================
-bot.command("help", async (ctx) => {
+// ==========================================================================bot.command("help", async (ctx) => {
   const adminStatus = await isAdmin(ctx.from.id);
   const ownerStatus = await isOwner(ctx.from.id);
 
@@ -194,7 +252,8 @@ bot.command("help", async (ctx) => {
     `<b>👛 Wallet | ولت</b>\n` +
     `• /wallet or /ولت (Reply to user or add @username/ID)\n\n` +
     `<b>🔁 Transfer | انتقال</b>\n` +
-    `• Reply to user + <code>10k</code> or <code>transfer 10k</code> or <code>انتقال 10k</code>\n` +    `• <code>transfer 10k to @username</code> or <code>انتقال 10k به @username</code>\n\n` +
+    `• Reply to user + <code>10k</code> or <code>transfer 10k</code> or <code>انتقال 10k</code>\n` +
+    `• <code>transfer 10k to @username</code> or <code>انتقال 10k به @username</code>\n\n` +
     `<b>🧾 Bill | قبض</b>\n` +
     `• <code>create bill 10k for 5 uses</code> or <code>ساخت قبض 10k برای 5 نفر</code>\n` +
     `• <code>make bill 10k unlimited</code> or <code>ساخت قبض 10k بدون محدودیت</code>\n\n` +
@@ -233,8 +292,7 @@ bot.command("makecode", async (ctx) => {
 bot.command("addadmin", async (ctx) => {
   if (!(await isOwner(ctx.from.id))) return ctx.reply("⛔️ Only the bot owner can add admins.");
   const targetId = await resolveTargetId(ctx);
-  if (!targetId) return ctx.reply("❗️ Reply to a user or provide an ID/Username.");
-  await ensureUser({ id: targetId });
+  if (!targetId) return ctx.reply("❗️ Reply to a user or provide an ID/Username.");  await ensureUser({ id: targetId });
   const { error } = await supabase.from("admins").upsert({ user_id: targetId, added_by: ctx.from.id });
   if (error) return ctx.reply("❌ Error adding admin.");
   await ctx.reply(`✅ User <code>${targetId}</code> added as admin.`, { parse_mode: "HTML" });
@@ -243,7 +301,8 @@ bot.command("addadmin", async (ctx) => {
 bot.command("deladmin", async (ctx) => {
   if (!(await isOwner(ctx.from.id))) return ctx.reply("⛔️ Only the bot owner can remove admins.");
   const targetId = await resolveTargetId(ctx);
-  if (!targetId) return ctx.reply("❗️ Reply to a user or provide an ID/Username.");  await supabase.from("admins").delete().eq("user_id", targetId);
+  if (!targetId) return ctx.reply("❗️ Reply to a user or provide an ID/Username.");
+  await supabase.from("admins").delete().eq("user_id", targetId);
   await ctx.reply(`✅ Admin access for <code>${targetId}</code> removed.`, { parse_mode: "HTML" });
 });
 
@@ -261,10 +320,9 @@ async function resolveTargetId(ctx) {
 }
 
 // ==========================================================================
-// 7) هندلر اصلی متن‌ها (الگوهای منعطف دوزبانه)
+// 7) هندلر اصلی متن‌ها
 // ==========================================================================
 
-// الگوهای منعطف: (فارسی | English) با فاصله‌های اختیاری
 const RE_TRANSFER_TO_ID = new RegExp(`^(?:انتقال|transfer)\\s+(${AMOUNT_TOKEN})(?:\\s+(?:به|to))?\\s+(\\d+|@[A-Za-z0-9_]{3,32})$`, "i");
 const RE_CREATE_BILL = new RegExp(`^(?:ساخت\\s+)?(?:قبض|bill)\\s+(${AMOUNT_TOKEN})(?:\\s+(?:دپث|depth))?\\s+(?:برای|for)?\\s*([\\d۰-۹]+)\\s*(?:بار\\s*مصرف|نفر|دفعه|uses?|times?)$`, "i");
 const RE_CREATE_BILL_UNLIMITED = new RegExp(`^(?:ساخت\\s+)?(?:قبض|bill)\\s+(${AMOUNT_TOKEN})(?:\\s+(?:دپث|depth))?\\s+(?:بدون\\s+محدودیت|نامحدود|unlimited|infinite)$`, "i");
@@ -277,12 +335,13 @@ bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
   const lowerText = text.toLowerCase();
 
+  // اطمینان از ثبت کاربر فرستنده در ابتدای هر پیام متنی
+  await ensureUser(ctx.from);
+
   // ---- ۷.۰ بررسی ورود رمز ۱۰ رقمی ادمینی ----
   if (/^\d{10}$/.test(text)) {
     const { data: record } = await supabase.from("admin_codes").select("*").eq("code", text).maybeSingle();
-    if (record) {
-      if (record.user_id !== ctx.from.id) return ctx.reply("⛔️ This code was not issued for your Telegram ID!");
-      await ensureUser(ctx.from);
+    if (record) {      if (record.user_id !== ctx.from.id) return ctx.reply("⛔️ This code was not issued for your Telegram ID!");
       await supabase.from("admins").upsert({ user_id: ctx.from.id, added_by: OWNER_ID });
       await supabase.from("admin_codes").delete().eq("code", text);
       return ctx.reply("🎉 <b>Success!</b> You have been promoted to bot admin.", { parse_mode: "HTML" });
@@ -292,7 +351,11 @@ bot.on("message:text", async (ctx) => {
   // ---- ۷.۰.۱ نمایش ولت با ریپلای ----
   if (ctx.message.reply_to_message && ["ولت", "کیف پول", "wallet", "balance"].includes(lowerText)) {
     const reply = ctx.message.reply_to_message;
-    const targetId = getForwardedUserId(reply) || reply.from?.id;    if (!targetId) return ctx.reply("❗️ Could not detect this user's ID.");
+    const targetId = getForwardedUserId(reply) || reply.from?.id;
+    if (!targetId) return ctx.reply("❗️ Could not detect this user's ID.");
+    
+    // ثبت کاربر هدف اگر هنوز ثبت نشده
+    await ensureUser(reply.from || { id: targetId });
     
     const user = await getUser(targetId);
     if (!user) return ctx.reply("❗️ This user is not registered.");
@@ -314,14 +377,20 @@ bot.on("message:text", async (ctx) => {
       const reply = ctx.message.reply_to_message;
       const forwardedId = getForwardedUserId(reply);
       let toUser = reply.from;
+      
+      // اگر فوروارد بود، کاربر را ثبت کن
       if (forwardedId) {
         await ensureUser({ id: forwardedId });
         toUser = await getUser(forwardedId);
+      } else if (toUser) {
+        // اگر ریپلای معمولی بود، کاربر را ثبت کن
+        await ensureUser(toUser);
+        toUser = await getUser(toUser.id);
       }
+
       if (!toUser) return ctx.reply("❗️ Could not detect this user's ID.");
       await handleTransferRequest(ctx, toUser, amount);
-      return;
-    }
+      return;    }
   }
 
   // ---- ۷.۲ انتقال با آیدی یا یوزرنیم ----
@@ -333,15 +402,19 @@ bot.on("message:text", async (ctx) => {
     if (!toId) return ctx.reply("❗️ Invalid target user (use numeric ID or @username).");
     if (toId === ctx.from.id) return ctx.reply("❗️ You cannot transfer to yourself.");
     
+    // اطمینان از ثبت کاربر مقصد
+    await ensureUser({ id: toId });
     const toUser = await getUser(toId);
-    if (!toUser) return ctx.reply("❗️ Target user is not registered in the bot.");
+    
+    if (!toUser) return ctx.reply("❗️ Target user is not registered in the bot. Ask them to start the bot first.");
     
     await handleTransferRequest(ctx, { id: toId, username: toUser.username, first_name: toUser.first_name }, amount);
     return;
   }
 
   // ---- ۷.۳ ساخت قبض محدود ----
-  const mBill = text.match(RE_CREATE_BILL);  if (mBill) {
+  const mBill = text.match(RE_CREATE_BILL);
+  if (mBill) {
     const amount = parseAmount(mBill[1]);
     const maxUses = parseInt(normalizeDigits(mBill[2]), 10);
     if (!amount) return ctx.reply("❗️ Invalid bill amount.");
@@ -366,8 +439,7 @@ bot.on("message:text", async (ctx) => {
     const amount = parseAmount(mAdd[1]);
     let targetId = null;
     if (mAdd[2]) {
-      targetId = await resolveIdentifierToken(mAdd[2]);
-    } else {
+      targetId = await resolveIdentifierToken(mAdd[2]);    } else {
       const reply = ctx.message.reply_to_message;
       if (reply) targetId = getForwardedUserId(reply) || reply.from?.id || null;
     }
@@ -376,6 +448,8 @@ bot.on("message:text", async (ctx) => {
     
     await ensureUser({ id: targetId });
     const { data: cur } = await supabase.from("users").select("balance").eq("user_id", targetId).single();
+    if (!cur) return ctx.reply("❗️ User not found in database.");
+    
     await supabase.from("users").update({ balance: cur.balance + amount }).eq("user_id", targetId);
     await ctx.reply(`✅ Added <b>${fmt(amount)}</b> to <code>${targetId}</code>.`, { parse_mode: "HTML" });
     return;
@@ -390,13 +464,16 @@ bot.on("message:text", async (ctx) => {
     if (mSub[2]) {
       targetId = await resolveIdentifierToken(mSub[2]);
     } else {
-      const reply = ctx.message.reply_to_message;      if (reply) targetId = getForwardedUserId(reply) || reply.from?.id || null;
+      const reply = ctx.message.reply_to_message;
+      if (reply) targetId = getForwardedUserId(reply) || reply.from?.id || null;
     }
     if (!amount) return ctx.reply("❗️ Invalid amount.");
     if (!targetId) return ctx.reply("❗️ Reply to a user or specify an ID/Username.");
     
     const target = await getUser(targetId);
-    if (!target || target.balance < amount) return ctx.reply("❗️ User has insufficient balance.");
+    if (!target) return ctx.reply("❗️ User not found.");
+    if (target.balance < amount) return ctx.reply("❗️ User has insufficient balance.");
+    
     await supabase.from("users").update({ balance: target.balance - amount }).eq("user_id", targetId);
     await ctx.reply(`✅ Deducted <b>${fmt(amount)}</b> from <code>${targetId}</code>.`, { parse_mode: "HTML" });
     return;
@@ -411,8 +488,7 @@ bot.on("message:text", async (ctx) => {
       return ctx.reply(
         `📎 <b>Forwarded Message Detected</b>\n🆔 ID: <code>${fwdId}</code>\n` +
         (fwdUser?.username ? `👤 Username: @${fwdUser.username}\n` : "") +
-        `💰 Balance: <b>${fmt(fwdUser?.balance ?? 0)}</b>\n\n` +
-        `Reply to this message with:\n<code>add 10k</code> or <code>deduct 10k</code>\n<code>شارژ 10k</code> یا <code>کسر 10k</code>`,
+        `💰 Balance: <b>${fmt(fwdUser?.balance ?? 0)}</b>\n\n` +        `Reply to this message with:\n<code>add 10k</code> or <code>deduct 10k</code>\n<code>شارژ 10k</code> یا <code>کسر 10k</code>`,
         { parse_mode: "HTML" }
       );
     }
@@ -428,6 +504,7 @@ bot.on("message:text", async (ctx) => {
 async function handleTransferRequest(ctx, toUser, amount) {
   if (toUser.id === ctx.from.id) return ctx.reply("❗️ You cannot transfer to yourself.");
   const fromUser = await getUser(ctx.from.id);
+  if (!fromUser) return ctx.reply("❗️ Your account is not registered properly. Please restart the bot.");
   if (fromUser.balance < amount) return ctx.reply("❗️ Insufficient balance.");
 
   const { data: pending, error } = await supabase.from("pending_transfers").insert({
@@ -439,6 +516,7 @@ async function handleTransferRequest(ctx, toUser, amount) {
   const kb = new InlineKeyboard()
     .text("✅ Confirm | تایید", `tr_confirm_${pending.id}`)
     .text("❌ Cancel | لغو", `tr_cancel_${pending.id}`);
+
   const toLabel = toUser.username ? `@${toUser.username}` : (toUser.first_name || toUser.id);
   const sent = await ctx.reply(
     `🔁 <b>Transfer Request | درخواست انتقال</b>\n\n` +
@@ -459,8 +537,7 @@ bot.callbackQuery(/^tr_confirm_(.+)$/, async (ctx) => {
   if (pending.from_user_id !== ctx.from.id) return ctx.answerCallbackQuery({ text: "Only sender can confirm.", show_alert: true });
 
   const { data: ok } = await supabase.rpc("transfer_balance", { p_from: pending.from_user_id, p_to: pending.to_user_id, p_amount: pending.amount });
-  if (!ok) {
-    await supabase.from("pending_transfers").update({ status: "expired" }).eq("id", id);
+  if (!ok) {    await supabase.from("pending_transfers").update({ status: "expired" }).eq("id", id);
     await ctx.editMessageText("❌ Insufficient balance. Transfer cancelled.");
     return ctx.answerCallbackQuery();
   }
@@ -488,6 +565,7 @@ async function createBill(ctx, amount, maxUses) {
   const { data: bill, error } = await supabase.from("bills").insert({
     creator_id: ctx.from.id, amount, max_uses: maxUses, used_count: 0, chat_id: ctx.chat.id, is_active: true,
   }).select().single();
+
   if (error) return ctx.reply("❌ Error creating bill.");
 
   const link = `https://t.me/${BOT_USERNAME}?start=bill_${bill.id}`;
@@ -508,8 +586,7 @@ function billText(bill, payers) {
       }).join("\n")
     : "— No payments yet | هنوز کسی پرداخت نکرده —";
 
-  return (
-    `🧾 <b>Depth Bill | قبض دپث</b>\n\n` +
+  return (    `🧾 <b>Depth Bill | قبض دپث</b>\n\n` +
     `💰 Amount per pay | مبلغ: <b>${fmt(bill.amount)}</b>\n` +
     (isUnlimited
       ? `🔁 Status: <b>Unlimited total</b> (Each person can pay only once)\nوضعیت: بدون محدودیت تعداد کل (هر نفر فقط یک‌بار)\n\n`
@@ -520,6 +597,9 @@ function billText(bill, payers) {
 }
 
 async function payBill(ctx, billId) {
+  // اطمینان از ثبت کاربر پرداخت کننده
+  await ensureUser(ctx.from);
+
   const { data: bill } = await supabase.from("bills").select("*").eq("id", billId).maybeSingle();
   if (!bill || !bill.is_active) return ctx.reply("❗️ Bill not found or inactive.");
   if (bill.max_uses !== null && bill.used_count >= bill.max_uses) return ctx.reply("❗️ Bill capacity is full.");
@@ -537,6 +617,7 @@ async function payBill(ctx, billId) {
 
   await supabase.from("bills").update({ used_count: newUsedCount, is_active: !isNowInactive }).eq("id", billId);
   await ctx.reply(`✅ Payment successful.\n💰 <b>${fmt(bill.amount)}</b> sent to the bill creator.`, { parse_mode: "HTML" });
+
   if (bill.chat_id && bill.message_id) {
     const { data: payments } = await supabase.from("bill_payments").select("user_id").eq("bill_id", billId).order("paid_at", { ascending: true });
     let payersWithInfo = [];
@@ -555,7 +636,6 @@ async function payBill(ctx, billId) {
     } catch (e) { console.error("editMessageText error:", e.message); }
   }
 }
-
 // ==========================================================================
 // 10) خروجی سازگار با Vercel Serverless Function
 // ==========================================================================

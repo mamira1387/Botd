@@ -371,18 +371,23 @@ setInterval(async () => {
 bot.command("game", async (ctx) => await showGameMenu(ctx));
 bot.command("بازی", async (ctx) => await showGameMenu(ctx));
 
-async function areGamesEnabled() {
-  try {
-    const { data, error } = await supabase
-      .from("bot_settings")
-      .select("value")
-      .eq("key", "games_enabled")
-      .maybeSingle();
-    
-    if (error) {
-      console.error("Database error in areGamesEnabled:", error.message);
-      return true; // در صورت خطا، بازی‌ها را باز فرض کن تا ربات متوقف نشود
-    }
+async function showGameMenu(ctx) {
+  const isOn = await areGamesEnabled();
+  
+  if (!isOn) {
+    return ctx.reply("🚫 Games are currently disabled by admin.\nبازی‌ها در حال حاضر توسط ادمین غیرفعال شده‌اند.");
+  }
+  
+  const kb = new InlineKeyboard()
+    .text("🎲 Dice & Sports", "game_menu_dice")
+    .row()
+    .text("💣 Mines Game", "game_menu_mines");
+
+  await ctx.reply("🎮 <b>Select a Game | بازی مورد نظر را انتخاب کنید</b>\n\n⚠️ Note: This is fake money for fun!", { 
+    parse_mode: "HTML", 
+    reply_markup: kb 
+  });
+}
     
     return data ? data.value : true; // پیش‌فرض روشن
   } catch (e) {

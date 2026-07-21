@@ -233,10 +233,28 @@ bot.command("start", async (ctx) => {
 // ==========================================================================
 
 bot.command("wallet", async (ctx) => {
-  const user = await getUser(ctx.from.id);
+  let targetId = ctx.from.id;
+
+  const reply = ctx.message.reply_to_message;
+  const argRaw = ctx.match?.trim();
+
+  if (reply) {
+    const replyId = getForwardedUserId(reply) || reply.from?.id;
+    if (replyId) targetId = replyId;
+  } else if (argRaw) {
+    const resolved = await resolveIdentifierToken(argRaw);
+    if (resolved) targetId = resolved;
+    else return ctx.reply("❗️ کاربر مورد نظر پیدا نشد. آیدی عددی یا @یوزرنیم رو درست وارد کن.");
+  }
+
+  const user = await getUser(targetId);
+  if (!user) return ctx.reply("❗️ این کاربر در ربات ثبت نشده است.");
+
+  const isSelf = targetId === ctx.from.id;
   await ctx.reply(
-    `👛 <b>کیف پول شما</b>\n\n` +
-    `🆔 آیدی ولت: <code>${ctx.from.id}</code>\n` +
+    `👛 <b>${isSelf ? "کیف پول شما" : "کیف پول کاربر"}</b>\n\n` +
+    `🆔 آیدی ولت: <code>${targetId}</code>\n` +
+    (user.username ? `👤 یوزرنیم: @${user.username}\n` : "") +
     `💰 موجودی: <b>${fmt(user.balance)}</b>`,
     { parse_mode: "HTML" }
   );
@@ -253,7 +271,9 @@ bot.command("help", async (ctx) => {
   let text =
     `📖 <b>راهنمای Depth TON Bot</b>\n\n` +
     `<b>👛 ولت</b>\n` +
-    `/wallet — نمایش موجودی و آیدی ولت\n\n` +
+    `/wallet — نمایش موجودی و آیدی ولت شما\n` +
+    `/wallet 12345678 یا /wallet @username — دیدن ولت دیگران\n` +
+    `ریپلای روی پیام کسی + نوشتن «ولت» — دیدن ولت همون کاربر\n\n` +
     `<b>🔁 انتقال</b>\n` +
     `• ریپلای روی پیام کسی + عدد (مثل <code>10k</code>) — درخواست انتقال با تایید دکمه‌ای\n` +
     `• <code>انتقال 10k به 12345678</code> — انتقال با آیدی ولت\n\n` +
@@ -390,6 +410,25 @@ bot.on("message:text", async (ctx) => {
 
       return ctx.reply("🎉 <b>تبریک!</b> شما با موفقیت به عنوان ادمین ربات ارتقا یافتید.", { parse_mode: "HTML" });
     }
+  }
+
+  // ---- ۷.۰.۱ نمایش ولت با ریپلای + نوشتن «ولت» ----
+  if (ctx.message.reply_to_message && (text === "ولت" || text === "کیف پول")) {
+    const reply = ctx.message.reply_to_message;
+    const targetId = getForwardedUserId(reply) || reply.from?.id;
+    if (!targetId) {
+      return ctx.reply("❗️ نتونستم آیدی این کاربر رو تشخیص بدم.");
+    }
+    const user = await getUser(targetId);
+    if (!user) return ctx.reply("❗️ این کاربر در ربات ثبت نشده است.");
+
+    return ctx.reply(
+      `👛 <b>کیف پول کاربر</b>\n\n` +
+      `🆔 آیدی ولت: <code>${targetId}</code>\n` +
+      (user.username ? `👤 یوزرنیم: @${user.username}\n` : "") +
+      `💰 موجودی: <b>${fmt(user.balance)}</b>`,
+      { parse_mode: "HTML" }
+    );
   }
 
   // ---- ۷.۱ انتقال با ریپلای روی پیام + عدد خالی (10k / ۱۰کا / 5000) ----

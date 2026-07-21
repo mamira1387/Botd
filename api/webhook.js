@@ -284,7 +284,7 @@ bot.command("help", async (ctx) => {
   if (adminStatus) {
     text +=
       `\n\n<b>🛡 دستورات ادمین</b>\n` +
-      `• <code>add ton 10k</code> (ریپلای یا با آیدی/یوزرنیم) — شارژ کاربر\n` +
+      `• <code>add ton 10k</code> یا <code>شارژ 10k</code> (ریپلای یا با آیدی/یوزرنیم) — شارژ کاربر\n` +
       `• <code>کسر 10k</code> (ریپلای یا با آیدی/یوزرنیم) — کسر از کاربر\n` +
       `• یه پیام از کسی رو به پیوی ربات فوروارد کن تا آیدیش رو نشونت بده، بعد روی همون پیام فوروارد شده ریپلای کن و شارژ/کسر کن`;
   }
@@ -382,8 +382,10 @@ async function resolveTargetId(ctx) {
 const RE_TRANSFER_TO_ID = new RegExp(`^انتقال\\s+(${AMOUNT_TOKEN})\\s+به\\s+(\\d+)$`, "i");
 const RE_CREATE_BILL = new RegExp(`^ساخت\\s+قبض\\s+(${AMOUNT_TOKEN})\\s+دپث\\s+([\\d۰-۹]+)\\s*بار\\s*مصرف$`, "i");
 const RE_ADMIN_ADD = new RegExp(`^add\\s*ton\\s+(${AMOUNT_TOKEN})(?:\\s+(?:به|for)\\s+(\\d+|@[A-Za-z0-9_]{3,32}))?$`, "i");
+const RE_ADMIN_ADD_FA = new RegExp(`^شارژ\\s+(${AMOUNT_TOKEN})(?:\\s+(?:به)\\s+(\\d+|@[A-Za-z0-9_]{3,32}))?$`, "i");
 const RE_ADMIN_SUB = new RegExp(`^کسر\\s+(${AMOUNT_TOKEN})(?:\\s+(?:از)\\s+(\\d+|@[A-Za-z0-9_]{3,32}))?$`, "i");
 const RE_JUST_NUMBER = new RegExp(`^${AMOUNT_TOKEN}$`, "i");
+const RE_TRANSFER_REPLY_FA = new RegExp(`^انتقال\\s+(${AMOUNT_TOKEN})$`, "i");
 
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
@@ -464,8 +466,8 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  // ---- ۷.۴ شارژ توسط ادمین: "add ton 10k" (ریپلای/فوروارد یا با آیدی/یوزرنیم) ----
-  const mAdd = text.match(RE_ADMIN_ADD);
+  // ---- ۷.۴ شارژ توسط ادمین: "add ton 10k" یا "شارژ 10k" (ریپلای/فوروارد یا با آیدی/یوزرنیم) ----
+  const mAdd = text.match(RE_ADMIN_ADD) || text.match(RE_ADMIN_ADD_FA);
   if (mAdd) {
     if (!(await isAdmin(ctx.from.id))) return ctx.reply("⛔️ فقط ادمین‌ها می‌تونن شارژ کنن.");
     const amount = parseAmount(mAdd[1]);

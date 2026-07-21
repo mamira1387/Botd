@@ -1,7 +1,6 @@
 {
   "name": "depth-ton-bot",
   "version": "1.0.0",
-  "private": true,
   "dependencies": {
     "grammy": "^1.19.0",
     "@supabase/supabase-js": "^2.39.0"

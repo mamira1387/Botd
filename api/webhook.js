@@ -371,27 +371,21 @@ setInterval(async () => {
 bot.command("game", async (ctx) => await showGameMenu(ctx));
 bot.command("بازی", async (ctx) => await showGameMenu(ctx));
 
-async function showGameMenu(ctx) {
-  // اول چک می‌کنیم بازی‌ها روشن هستند یا نه
-  const isOn = await areGamesEnabled();
-  
-  if (!isOn) {
-    return ctx.reply("🚫 Games are currently disabled by admin.\nبازی‌ها در حال حاضر توسط ادمین غیرفعال شده‌اند.");
+async function areGamesEnabled() {
+  try {
+    const { data } = await supabase
+      .from("bot_settings")
+      .select("value")
+      .eq("key", "games_enabled")
+      .maybeSingle();
+    
+    // اگر داده‌ای نبود یا خطایی رخ داد، پیش‌فرض را true برمی‌گردانیم
+    return data ? data.value : true; 
+  } catch (e) {
+    console.error("Error checking game status:", e);
+    return true; // در صورت خطای دیتابیس، بازی‌ها باز بمانند
   }
-  
-  // ساخت کیبورد با دکمه‌های شیشه‌ای
-  const kb = new InlineKeyboard()
-    .text("🎲 Dice & Sports", "game_menu_dice")
-    .row() // رفتن به سطر بعد
-    .text("💣 Mines Game", "game_menu_mines");
-
-  // ارسال پیام با دکمه‌ها
-  await ctx.reply("🎮 <b>Select a Game | بازی مورد نظر را انتخاب کنید</b>\n\n⚠️ Note: This is fake money for fun!", { 
-    parse_mode: "HTML", 
-    reply_markup: kb 
-  });
 }
-
 bot.callbackQuery("game_menu_mines", async (ctx) => {
   if (!(await areGamesEnabled())) return ctx.answerCallbackQuery({ text: "Games disabled." });
   await ctx.editMessageText("💣 <b>Mines Game | بازی مین</b>\n\nTo start, reply to this message with:\n<code>mines 1000 3</code>\n(Amount, Number of Mines 1-5)", { parse_mode: "HTML" });

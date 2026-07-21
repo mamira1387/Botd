@@ -373,20 +373,23 @@ bot.command("بازی", async (ctx) => await showGameMenu(ctx));
 
 async function areGamesEnabled() {
   try {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("bot_settings")
       .select("value")
       .eq("key", "games_enabled")
       .maybeSingle();
     
-    // اگر داده‌ای نبود یا خطایی رخ داد، پیش‌فرض را true برمی‌گردانیم
-    return data ? data.value : true; 
+    if (error) {
+      console.error("Database error in areGamesEnabled:", error.message);
+      return true; // در صورت خطا، بازی‌ها را باز فرض کن تا ربات متوقف نشود
+    }
+    
+    return data ? data.value : true; // پیش‌فرض روشن
   } catch (e) {
-    console.error("Error checking game status:", e);
-    return true; // در صورت خطای دیتابیس، بازی‌ها باز بمانند
+    console.error("Exception in areGamesEnabled:", e);
+    return true;
   }
-}
-bot.callbackQuery("game_menu_mines", async (ctx) => {
+}bot.callbackQuery("game_menu_mines", async (ctx) => {
   if (!(await areGamesEnabled())) return ctx.answerCallbackQuery({ text: "Games disabled." });
   await ctx.editMessageText("💣 <b>Mines Game | بازی مین</b>\n\nTo start, reply to this message with:\n<code>mines 1000 3</code>\n(Amount, Number of Mines 1-5)", { parse_mode: "HTML" });
 });

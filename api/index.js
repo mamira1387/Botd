@@ -1,5 +1,5 @@
 // ==========================================================================
-// Depth TON Bot — index.js (Final Clean Version)
+// Depth TON Bot — index.js (Final Stable Version for Vercel)
 // ==========================================================================
 
 const { Bot, InlineKeyboard, webhookCallback } = require("grammy");
@@ -295,8 +295,8 @@ const KW = {
   to: ["به", "to"],  createBill: ["ساخت\\s*قبض", "create\\s*bill", "make\\s*bill"],
   uses: ["بار\\s*مصرف", "uses", "times"],
   unlimited: ["بدون\\s*محدودیت", "unlimited", "no\\s*limit"],
-  charge: ["شارژ", "add\\s*ton", "charge", "topup"],
-  deduct: ["کسر", "deduct", "sub", "remove"],
+  charge: ["شارژ", "add\\s*ton", "charge", "topup", "افزایش"],
+  deduct: ["کسر", "ولس", "کم", "deduct", "sub", "remove", "minus"], 
   from: ["از", "from"],
   wallet: ["ولت", "کیف\\s*پول", "wallet", "balance"],
 };
@@ -445,24 +445,7 @@ bot.on("message:text", async (ctx) => {
     return;
   }
 
-  
-
-  // ---- ۷.۶ تشخیص پیام فوروارد شده در پیوی توسط ادمین ----
-  if (ctx.chat.type === "private" && (await isAdmin(ctx.from.id))) {
-    const fwdId = getForwardedUserId(ctx.message);
-    if (fwdId) {
-      await ensureUser({ id: fwdId });
-      const fwdUser = await getUser(fwdId);
-      return ctx.reply(
-        `📎 <b>Forwarded Message Detected</b>\n🆔 ID: <code>${fwdId}</code>\n` +
-        (fwdUser?.username ? `👤 Username: @${fwdUser.username}\n` : "") +
-        `💰 Balance: <b>${fmt(fwdUser?.balance ?? 0)}</b>\n\n` +
-        `Reply to this message with:\n<code>add 10k</code> or <code>deduct 10k</code>`,
-        { parse_mode: "HTML" }
-      );
-    }  }
-});
-// ---- ۷.۵ کسر توسط ادمین (اصلاح شده برای پایداری در Vercel) ----
+  // ---- ۷.۵ کسر توسط ادمین (اصلاح شده با RPC) ----
   const mSub = text.match(RE_ADMIN_SUB);
   if (mSub) {
     if (!(await isAdmin(ctx.from.id))) return ctx.reply("⛔️ Only admins can deduct balance.");
@@ -470,7 +453,6 @@ bot.on("message:text", async (ctx) => {
     const amount = parseAmount(mSub[1]);
     let targetId = null;
     
-    // تشخیص هدف: آیدی در متن، ریپلای، یا خود ادمین
     if (mSub[2]) {
       targetId = await resolveIdentifierToken(mSub[2]);
     } else {
@@ -483,40 +465,44 @@ bot.on("message:text", async (ctx) => {
     }
 
     if (!amount) return ctx.reply("❗️ Invalid amount.");
-    if (!targetId) targetId = ctx.from.id; // اگر کسی مشخص نبود، از خود ادمین کسر کن
+    if (!targetId) targetId = ctx.from.id;
 
-    // دریافت موجودی فعلی برای بررسی
     const target = await getUser(targetId);
     if (!target) return ctx.reply("❗️ User not found.");
     if (target.balance < amount) return ctx.reply("❗️ Insufficient balance.");
-
-    // استفاده از تابع RPC برای اطمینان از انجام تراکنش
-    // نکته: برای کسر، ما مبلغ را به آیدی "0" (بانک مرکزی/سیستم) انتقال می‌دهیم تا از حساب کاربر خارج شود
-    // یا می‌توانیم مستقیماً بالانس را کم کنیم اما با قفل مناسب.
-    // اینجا از روش مستقیم اما با بررسی مجدد استفاده می‌کنیم:
     
-    const { error } = await supabase
-      .from("users")
-      .update({ balance: target.balance - amount })
-      .eq("user_id", targetId)
-      .eq("balance", target.balance); // این شرط باعث می‌شود فقط اگر بالانس تغییر نکرده باشد آپدیت شود (جلوگیری از Race Condition)
+    // استفاده از تابع RPC برای کسر مطمئن
+    // ما پول را به آیدی 0 (سیستم) انتقال می‌دهیم تا از چرخه خارج شود
+    const { data: ok } = await supabase.rpc("transfer_balance", { 
+      p_from: targetId, 
+      p_to: 0, // آیدی سیستم برای کسر
+      p_amount: amount 
+    });
 
-    if (error) {
-      console.error("Deduct error:", error);
-      return ctx.reply("❌ Error processing deduction. Please try again.");
+    if (!ok) {
+      return ctx.reply("❌ Error processing deduction. Database transaction failed.");
     }
 
-    // بررسی نهایی: مطمئن شویم پول واقعاً کم شده
-    const { data: finalCheck } = await supabase.from("users").select("balance").eq("user_id", targetId).single();
-    
-    if (finalCheck && finalCheck.balance === target.balance - amount) {
-      await ctx.reply(`✅ Deducted <b>${fmt(amount)}</b> from <code>${targetId}</code>. New Balance: ${fmt(finalCheck.balance)}`, { parse_mode: "HTML" });
-    } else {
-      // اگر بالانس تغییر نکرده بود، یعنی مشکلی در دیتابیس پیش آمده
-      await ctx.reply("⚠️ Deduction command received but balance didn't update. Check database logs.");
-    }
+    await ctx.reply(`✅ Deducted <b>${fmt(amount)}</b> from <code>${targetId}</code>.`, { parse_mode: "HTML" });
     return;
   }
+
+  // ---- ۷.۶ تشخیص پیام فوروارد شده در پیوی توسط ادمین ----
+  if (ctx.chat.type === "private" && (await isAdmin(ctx.from.id))) {    const fwdId = getForwardedUserId(ctx.message);
+    if (fwdId) {
+      await ensureUser({ id: fwdId });
+      const fwdUser = await getUser(fwdId);
+      return ctx.reply(
+        `📎 <b>Forwarded Message Detected</b>\n🆔 ID: <code>${fwdId}</code>\n` +
+        (fwdUser?.username ? `👤 Username: @${fwdUser.username}\n` : "") +
+        `💰 Balance: <b>${fmt(fwdUser?.balance ?? 0)}</b>\n\n` +
+        `Reply to this message with:\n<code>add 10k</code> or <code>deduct 10k</code>`,
+        { parse_mode: "HTML" }
+      );
+    }
+  }
+});
+
 // ==========================================================================
 // 8) انتقال با تایید دکمه شیشه‌ای
 // ==========================================================================
@@ -551,8 +537,7 @@ async function handleTransferRequest(ctx, toUser, amount) {
 
 bot.callbackQuery(/^tr_confirm_(.+)$/, async (ctx) => {
   const id = ctx.match[1];
-  const { data: pending } = await supabase.from("pending_transfers").select("*").eq("id", id).maybeSingle();
-  if (!pending || pending.status !== "pending") return ctx.answerCallbackQuery({ text: "Request expired.", show_alert: true });
+  const { data: pending } = await supabase.from("pending_transfers").select("*").eq("id", id).maybeSingle();  if (!pending || pending.status !== "pending") return ctx.answerCallbackQuery({ text: "Request expired.", show_alert: true });
   if (pending.from_user_id !== ctx.from.id) return ctx.answerCallbackQuery({ text: "Only sender can confirm.", show_alert: true });
 
   const { data: ok } = await supabase.rpc("transfer_balance", { p_from: pending.from_user_id, p_to: pending.to_user_id, p_amount: pending.amount });
@@ -563,7 +548,8 @@ bot.callbackQuery(/^tr_confirm_(.+)$/, async (ctx) => {
   }
 
   await supabase.from("pending_transfers").update({ status: "confirmed" }).eq("id", id);
-  await ctx.editMessageText(`✅ <b>Transfer Successful</b>\nFrom: <code>${pending.from_user_id}</code>\nTo: <code>${pending.to_user_id}</code>\nAmount: <b>${fmt(pending.amount)}</b>`, { parse_mode: "HTML" });  await ctx.answerCallbackQuery({ text: "Transferred ✅" });
+  await ctx.editMessageText(`✅ <b>Transfer Successful</b>\nFrom: <code>${pending.from_user_id}</code>\nTo: <code>${pending.to_user_id}</code>\nAmount: <b>${fmt(pending.amount)}</b>`, { parse_mode: "HTML" });
+  await ctx.answerCallbackQuery({ text: "Transferred ✅" });
 });
 
 bot.callbackQuery(/^tr_cancel_(.+)$/, async (ctx) => {
@@ -600,8 +586,7 @@ function billText(bill, payers) {
   const payersList = payers.length
     ? payers.map((p) => {
         const info = p.users || {};
-        const label = info.username ? `@${info.username}` : (info.first_name || "User | کاربر");
-        return `• ${label}`;
+        const label = info.username ? `@${info.username}` : (info.first_name || "User | کاربر");        return `• ${label}`;
       }).join("\n")
     : "— No payments yet | هنوز کسی پرداخت نکرده —";
 
@@ -612,7 +597,8 @@ function billText(bill, payers) {
       ? `🔁 Status: <b>Unlimited total</b> (Each person can pay only once)\nوضعیت: بدون محدودیت تعداد کل (هر نفر فقط یک‌بار)\n\n`
       : `🔁 Remaining | باقی‌مانده: <b>${remaining} of ${bill.max_uses}</b>\n\n`) +
     `👥 <b>Payers | پرداخت‌کنندگان (${bill.used_count}):</b>\n${payersList}` +
-    (!isUnlimited && remaining <= 0 ? "\n\n🔒 This bill is now inactive." : "")  );
+    (!isUnlimited && remaining <= 0 ? "\n\n🔒 This bill is now inactive." : "")
+  );
 }
 
 async function payBill(ctx, billId) {
@@ -649,37 +635,28 @@ async function payBill(ctx, billId) {
     const updatedBill = { ...bill, used_count: newUsedCount };
     try {
       const kb = isNowInactive ? undefined : new InlineKeyboard().url("💳 Pay Bill | پرداخت", `https://t.me/${BOT_USERNAME}?start=bill_${billId}`);
-      await bot.api.editMessageText(bill.chat_id, bill.message_id, billText(updatedBill, payersWithInfo), { parse_mode: "HTML", reply_markup: kb });
-    } catch (e) { console.error("editMessageText error:", e.message); }
+      await bot.api.editMessageText(bill.chat_id, bill.message_id, billText(updatedBill, payersWithInfo), { parse_mode: "HTML", reply_markup: kb });    } catch (e) { console.error("editMessageText error:", e.message); }
   }
 }
 
 // ==========================================================================
-// 10) خروجی سازگار با Vercel Serverless Function (اصلاح شده)
+// 10) خروجی سازگار با Vercel Serverless Function
 // ==========================================================================
-
-// تغییر مهم: استفاده از "next-js" به جای "std/http" برای سازگاری با Vercel
 const handleUpdate = webhookCallback(bot, "next-js");
 
 module.exports = async (req, res) => {
-  // جلوگیری از ارور هنگام تست دستی در مرورگر (GET)
   if (req.method === "GET") {
     res.status(200).json({ status: "ok", bot: "Depth TON Bot", message: "Webhook is alive." });
     return;
   }
-
   if (req.method !== "POST") {
-    res.status(405).json({ error: "Method not allowed" });
+    res.status(405).send("Method Not Allowed");
     return;
   }
-
   try {
     await handleUpdate(req, res);
   } catch (err) {
     console.error("Webhook error:", err);
-    // همیشه به تلگرام ۲۰۰ برگردان تا پیام‌ها در صف نمانند
-    if (!res.headersSent) {
-      res.status(200).json({ ok: true });
-    }
+    if (!res.headersSent) res.status(200).json({ ok: true });
   }
 };

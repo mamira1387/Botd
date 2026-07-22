@@ -1,10 +1,11 @@
 {
-  "name": "depth-ton-bot",
-  "version": "1.0.0",
-  "main": "api/webhook.js",
-  "private": true,
-  "dependencies": {
-    "grammy": "^1.19.0",
-    "@supabase/supabase-js": "^2.39.0"
+  "version": 2,
+  "functions": {
+    "api/index.js": {
+      "maxDuration": 10
+    }
+  },
+  "env": {
+    "NODE_ENV": "production"
   }
 }

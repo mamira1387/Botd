@@ -270,130 +270,182 @@ async function handleWalletCommand(ctx) {
 // ==========================================================================
 // 5.1) دستور /help
 // ==========================================================================
-// Replace existing /help handler with this corrected, chunked version
-bot.command("help", async (ctx) => {
+// ================= Help menu (interactive) =================
+// Replace existing /help handler with this interactive menu implementation.
+
+const HELP_SECTIONS = {
+  main: {
+    title: '📖 Depth TON Bot — منوی راهنما',
+    text: `سلام! بخش موردنظر را انتخاب کن تا دستورها و مثال‌ها را ببینی.`,
+  },
+  wallet: {
+    title: '👛 والِت (Wallet)',
+    text:
+`• /wallet یا /ولت → نمایش موجودی شما
+مثال: <code>/wallet</code>
+
+نمایش موجودی دیگران:
+• ریپلای روی پیام کاربر + <code>/wallet</code>
+• یا: <code>/wallet 123456789</code> یا <code>/wallet @username</code>`,
+  },
+  transfer: {
+    title: '🔁 انتقال (Transfer)',
+    text:
+`• ریپلای + مبلغ → انتقال به کاربرِ ریپلای‌شده
+مثال: ریپلای روی پیام کاربر و ارسال متن: <code>10k</code>
+
+• انتقال مستقیم با آیدی/یوزرنیم:
+مثال: <code>انتقال 5k به @username</code>
+
+پس از ساخت درخواست، باید دکمهٔ "تایید" را بزنید تا انتقال انجام شود.`,
+  },
+  bill: {
+    title: '🧾 قبض (Bill)',
+    text:
+`• ساخت قبض با محدودیت:
+مثال: <code>create bill 10k for 5 uses</code>
+(فارسی: <code>ساخت قبض 10k 5 بار مصرف</code>)
+
+• قبض بدون محدودیت:
+مثال: <code>make bill 10k unlimited</code>
+
+• پرداخت: لینک یا /start=bill_{id} (در پیام قبض نمایش داده می‌شود).`,
+  },
+  stats: {
+    title: '📊 آمار روزانه (Stats)',
+    text:
+`• نمایش لیدربورد پیام‌های امروز در گروه:
+مثال: <code>آمار</code> یا <code>stats</code>
+
+• نفر اول یک‌بار در روز جایزه می‌گیرد (پیش‌فرض: <b>500,000 دپث</b>).`,
+  },
+  giveaway: {
+    title: '🎁 جایزهٔ شانسی (Giveaway)',
+    text:
+`• جایزهٔ رندوم توسط سیستم ممکن است در گروه منتشر شود.
+• ادمین می‌تواند دستی جایزه بسازد:
+مثال: <code>ساخت جایزه 100k</code>
+
+• اولین نفری که دکمه را بزند جایزه را می‌گیرد و پیام حذف می‌شود.`,
+  },
+  games: {
+    title: '🕹 بازی‌ها (Games)',
+    text:
+`• بازی با ایموجی‌ها:
+مثال: <code>/play فوتبال 10k</code> یا <code>/play ایموجی 5k</code>
+- بعد از شرط، ایموجی‌ها به‌صورت دکمه ظاهر می‌شوند.
+
+• مین (Mines):
+مثال: <code>/play مین 5000</code>
+- گرید دکمه‌ای نمایش داده می‌شود؛ هر خانه امن می‌تواند ضریب افزایش دهد.
+- برداشت مقدار: <code>/cashout_{gameId}</code> (شناسه بازی در پیام نشان داده می‌شود).`,
+  },
+  admin: {
+    title: '🛡 دستورات ادمین',
+    text:
+`(فقط ادمین‌ها می‌توانند اجرا کنند)
+• شارژ کاربر:
+مثال: <code>شارژ 10k @username</code> یا ریپلای + <code>add 10k</code>
+
+• کسر از کاربر:
+مثال: <code>کسر 5k @username</code>
+
+• ساخت جایزه:
+مثال: <code>ساخت جایزه 100k</code>
+
+• فعال/غیرفعال کردن قابلیت:
+مثال: <code>فعال کن giveaways</code> / <code>غیرفعال کن games</code>`,
+  },
+  owner: {
+    title: '👑 دستورات مالک (Owner)',
+    text:
+`• ساخت کد ادمین (مالک):
+مثال: <code>/makecode</code>
+
+• افزودن ادمین:
+مثال: <code>/addadmin {id|@username}</code>
+
+• حذف ادمین:
+مثال: <code>/deladmin {id|@username}</code>`,
+  },
+  tips: {
+    title: '⚠️ نکات مهم',
+    text:
+`• واحد: «دپث» — والت مجازی و فاقد ارزش واقعی.
+• برای شنیدن پیام‌های عادی در گروه، Privacy در BotFather باید غیرفعال شود.
+• برای حذف/ویرایش پیام‌ها، ربات باید در گروه ادمین با حق حذف پیام باشد.`,
+  }
+};
+
+function buildMainKeyboard(isAdmin = false, isOwner = false) {
+  const kb = new InlineKeyboard();
+  kb.text('👛 والِت', 'help_section_wallet')
+    .text('🔁 انتقال', 'help_section_transfer')
+    .row()
+    .text('🧾 قبض', 'help_section_bill')
+    .text('📊 آمار', 'help_section_stats')
+    .row()
+    .text('🎁 جایزه', 'help_section_giveaway')
+    .text('🕹 بازی‌ها', 'help_section_games');
+
+  if (isAdmin) {
+    kb.row().text('🛡 ادمین', 'help_section_admin');
+  }
+  if (isOwner) {
+    kb.row().text('👑 مالک', 'help_section_owner');
+  }
+  kb.row().text('⚠️ نکات مهم', 'help_section_tips');
+  return kb;
+}
+
+function buildBackKeyboard() {
+  return new InlineKeyboard().text('◀️ بازگشت', 'help_back');
+}
+
+// main menu command
+bot.command('help', async (ctx) => {
   try {
     const adminStatus = await isAdmin(ctx.from.id).catch(() => false);
     const ownerStatus = await isOwner(ctx.from.id).catch(() => false);
-
-    const sections = [];
-
-    sections.push(
-`📖 <b>Depth TON Bot — راهنما و مثال‌ها</b>`
-    );
-
-    sections.push(
-`<b>👛 والِت (Wallet)</b>
-• /wallet یا /ولت → نمایش موجودی شما
-  مثال: <code>/wallet</code>
-• نمایش موجودیِ دیگران با ریپلای یا آیدی/یوزرنیم:
-  مثال ریپلای: ریپلای روی پیام کاربر + <code>/wallet</code>
-  مثال با آیدی/یوزرنیم: <code>/wallet 123456789</code> یا <code>/wallet @username</code>`
-    );
-
-    sections.push(
-`<b>🔁 انتقال (Transfer)</b>
-• ریپلای روی پیام کاربر و نوشتن مبلغ:
-  مثال: ریپلای روی پیام کاربر + پیام: <code>10k</code>  (یا <code>انتقال 10k</code>)
-• ارسال مستقیم با یوزرنیم/آیدی:
-  مثال: <code>انتقال 5k به @username</code>
-  یا: <code>transfer 5000 to 123456789</code>
-• تایید انتقال توسط دکمهٔ شیشه‌ای: فرستنده باید دکمهٔ «تایید» را بزند تا انتقال انجام شود.`
-    );
-
-    sections.push(
-`<b>🧾 قبض (Bill)</b>
-• ایجاد قبض با محدودیت دفعات:
-  مثال: <code>create bill 10k for 5 uses</code>
-  (یا به فارسی: <code>ساخت قبض 10k 5 بار مصرف</code>)
-• ایجاد قبض بدون محدودیت:
-  مثال: <code>make bill 10k unlimited</code>
-• پرداخت قبض:
-  - وقتی قبض ساخته شود لینک پرداخت ظاهر می‌شود؛ روی آن کلیک کنید یا آدرس start را باز کنید، مثال: <code>/start=bill_{id}</code> (در متن help علامت <> حذف شد تا مشکل HTML پیش نیاید).`
-    );
-
-    sections.push(
-`<b>📊 آمار روزانه (Stats)</b>
-• نمایش لیدربورد پیام‌های آن روز در گروه:
-  مثال: <code>آمار</code> یا <code>stats</code>
-• نفر اول (اولین بار در روز) به‌صورت خودکار جایزه می‌گیرد (پیش‌فرض: <b>500,000 دپث</b>).`
-    );
-
-    sections.push(
-`<b>🎁 جایزهٔ شانسی / Giveaway</b>
-• جایزهٔ رندوم توسط سیستم در گروه‌ها ارسال می‌شود (در هر پیام احتمال کمی دارد).
-• ادمین می‌تواند جایزهٔ دستی بسازد:
-  مثال: <code>ساخت جایزه 100k</code>
-• اولین نفری که دکمه را بزند جایزه را می‌گیرد و پیام حذف می‌شود.`
-    );
-
-    sections.push(
-`<b>🕹 بازی‌ها (Games)</b>
-• بازی با ایموجی‌ها (انتخاب یک ایموجی):
-  مثال: <code>/play فوتبال 10k</code> یا <code>/play ایموجی 5k</code>
-  - دکمه‌های شیشه‌ای با ایموجی نمایش داده می‌شود؛ روی ایموجیِ انتخابی کلیک کنید.
-• مین (Mines) — بازی با گرید دکمه‌ای:
-  مثال: <code>/play مین 5000</code> یا <code>بازی مین 5000</code>
-  - پس از قرار دادن شرط، گرید نشان داده می‌شود؛ خانه‌ها را باز کنید، در هر باخت شرط می‌سوزد.
-  - برای برداشت: <code>/cashout_{gameId}</code> (در متن help از {} استفاده شده تا خطای HTML پیش نیاید).`
-    );
-
-    sections.push(
-`<b>🛡 دستورات ادمین</b>
-(فقط ادمین‌ها می‌توانند اجرا کنند)
-• شارژ کاربر:
-  مثال: <code>شارژ 10k @username</code> یا ریپلای + <code>add 10k</code>
-• کسر از کاربر:
-  مثال: <code>کسر 5k @username</code> یا ریپلای + <code>deduct 5k</code>
-• ساخت جایزه دستی:
-  مثال: <code>ساخت جایزه 100k</code>
-• فعال/غیرفعال کردن قابلیت‌ها:
-  مثال فعال: <code>فعال کن giveaways</code>
-  مثال غیرفعال: <code>غیرفعال کن games</code>`
-    );
-
-    if (ownerStatus) {
-      sections.push(
-`<b>👑 دستورات مالک (Owner)</b>
-• ساخت کد ادمین برای کاربر:
-  مثال (مالک اجرا می‌کند): <code>/makecode</code> (سپس کد ۱۰ رقمی تولید می‌شود)
-• افزودن ادمین مستقیم:
-  مثال: <code>/addadmin {id|@username}</code>
-• حذف ادمین:
-  مثال: <code>/deladmin {id|@username}</code>`
-      );
-    }
-
-    sections.push(
-`<b>🔎 روش‌های شناسایی هدف</b>
-• برای آدرس‌دهی به کاربر می‌توانید:
-  - ریپلای روی پیام کاربر
-  - فوروارد پیامِ کاربر به پیوی ربات (برای گرفتن ID)
-  - استفاده از آیدی عددی یا یوزرنیم: <code>@username</code> یا <code>123456789</code>`
-    );
-
-    sections.push(
-`<b>⚠️ نکات مهم</b>
-• تمام واحدها در «دپث» هستند و این والت کاملاً مجازی است — هیچ ارزش واقعی ندارد.
-• برای حذف یا ویرایش پیام‌هایی که ربات ایجاد کرده، ربات باید در گروه ادمین با مجوز حذف پیام باشد.
-• اگر پیام کار نمی‌کند: احتمال دارد متن خیلی طولانی باشد یا شامل علامت‌های <> شده باشد — این نسخه از help از {} به‌جای <> استفاده می‌کند.`
-    );
-
-    // send sections in chunks (safe under Telegram's ~4096 limit)
-    const CHUNK_LIMIT = 3500;
-    let current = "";
-    for (const sec of sections) {
-      if ((current + "\n\n" + sec).length > CHUNK_LIMIT) {
-        if (current.trim()) await ctx.reply(current, { parse_mode: "HTML" }).catch(e => console.error("help send error:", e));
-        current = sec;
-      } else {
-        current = current ? (current + "\n\n" + sec) : sec;
-      }
-    }
-    if (current.trim()) await ctx.reply(current, { parse_mode: "HTML" }).catch(e => console.error("help send error:", e));
+    const main = HELP_SECTIONS.main;
+    const kb = buildMainKeyboard(adminStatus, ownerStatus);
+    await ctx.reply(`<b>${main.title}</b>\n\n${main.text}`, { parse_mode: 'HTML', reply_markup: kb });
   } catch (err) {
-    console.error("help handler error:", err);
-    await ctx.reply("📖 Help error — لطفا بعدا تلاش کنید یا لاگ‌ها را بررسی کنید.");
+    console.error('help command error:', err);
+    await ctx.reply('خطا در نمایش منوِ راهنما. بعداً تلاش کنید.');
+  }
+});
+
+// callback: open section (matches help_section_<key>)
+bot.callbackQuery(/^help_section_(.+)$/, async (ctx) => {
+  try {
+    const key = ctx.match[1];
+    const section = HELP_SECTIONS[key];
+    if (!section) {
+      return ctx.answerCallbackQuery({ text: 'بخش یافت نشد.', show_alert: true });
+    }
+    // Build keyboard: back button => returns to main
+    const kb = buildBackKeyboard();
+    await ctx.editMessageText(`<b>${section.title}</b>\n\n${section.text}`, { parse_mode: 'HTML', reply_markup: kb });
+    return ctx.answerCallbackQuery();
+  } catch (err) {
+    console.error('help_section callback error:', err);
+    return ctx.answerCallbackQuery({ text: 'خطا رخ داد.', show_alert: true });
+  }
+});
+
+// callback: back to main
+bot.callbackQuery('help_back', async (ctx) => {
+  try {
+    const adminStatus = await isAdmin(ctx.from.id).catch(() => false);
+    const ownerStatus = await isOwner(ctx.from.id).catch(() => false);
+    const main = HELP_SECTIONS.main;
+    const kb = buildMainKeyboard(adminStatus, ownerStatus);
+    await ctx.editMessageText(`<b>${main.title}</b>\n\n${main.text}`, { parse_mode: 'HTML', reply_markup: kb });
+    return ctx.answerCallbackQuery();
+  } catch (err) {
+    console.error('help_back callback error:', err);
+    return ctx.answerCallbackQuery({ text: 'خطا رخ داد.', show_alert: true });
   }
 });
 // ==========================================================================

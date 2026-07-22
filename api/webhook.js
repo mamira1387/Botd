@@ -1,5 +1,5 @@
 // ==========================================================================
-// Depth TON Bot — api/webhook.js (Cleaned & Fixed Version)
+// Depth TON Bot — api/webhook.js (Final Stable Version)
 // ==========================================================================
 
 const { Bot, InlineKeyboard, webhookCallback } = require("grammy");
@@ -17,7 +17,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 const bot = new Bot(BOT_TOKEN);
 
 // ==========================================================================
-// 1) توابع کمکی
+// 1) توابع کمکی و تنظیمات
 // ==========================================================================
 
 function normalizeDigits(str) {
@@ -56,6 +56,16 @@ function parseAmount(raw) {
 
 function fmt(n) { return Number(n).toLocaleString("en-US"); }
 
+async function areGamesEnabled() {
+  try {
+    const { data, error } = await supabase.from("bot_settings").select("value").eq("key", "games_enabled").maybeSingle();
+    if (error) return true; // Fail-safe: اگر جدول نبود، بازی روشن بماند
+    return data ? data.value : true;
+  } catch (e) {
+    return true;
+  }
+}
+
 // ==========================================================================
 // 2) توابع دیتابیس و کاربران
 // ==========================================================================
@@ -86,17 +96,12 @@ async function getUser(userId) {
 async function isOwner(userId) { return Number(userId) === OWNER_ID; }
 async function isAdmin(userId) {
   if (await isOwner(userId)) return true;
-  const { data } = await supabase.from("admins").select("user_id").eq("user_id", userId).maybeSingle();
-  return !!data;
-}
-
-async function areGamesEnabled() {
-  const { data } = await supabase.from("bot_settings").select("value").eq("key", "games_enabled").maybeSingle();
-  return data ? data.value : false;
+  const { data } = await supabase.from("admins").select("user_id").eq("user_id", userId).maybeSingle();  return !!data;
 }
 
 // ==========================================================================
-// 2.1) تشخیص هویت پیام// ==========================================================================
+// 3) توابع کمکی هویت و رزولور
+// ==========================================================================
 
 function getForwardedUserId(message) {
   if (!message) return null;
@@ -136,8 +141,27 @@ async function resolveIdentifierToken(raw) {
   return null;
 }
 
+async function resolveTargetId(ctx) {
+  const reply = ctx.message?.reply_to_message;
+  if (reply) {
+    const forwardedId = getForwardedUserId(reply);
+    if (forwardedId) {      await ensureUser({ id: forwardedId });
+      return forwardedId;
+    }
+    const replyUser = getReplyFromUser(reply);
+    if (replyUser) {
+      await ensureUser(replyUser);
+      return replyUser.id;
+    }
+  }
+  const parts = ctx.message.text.trim().split(/\s+/);
+  const last = parts[parts.length - 1];
+  if (last.startsWith("/")) return null; 
+  return await resolveIdentifierToken(last);
+}
+
 // ==========================================================================
-// 3) میان‌افزارها
+// 4) میان‌افزارها و آمار
 // ==========================================================================
 
 bot.use(async (ctx, next) => {
@@ -145,7 +169,8 @@ bot.use(async (ctx, next) => {
   await next();
 });
 
-bot.use(async (ctx, next) => {  if (ctx.message && ctx.chat && (ctx.chat.type === "group" || ctx.chat.type === "supergroup")) {
+bot.use(async (ctx, next) => {
+  if (ctx.message && ctx.chat && (ctx.chat.type === "group" || ctx.chat.type === "supergroup")) {
     try {
       await supabase.from("chats").upsert({
         chat_id: ctx.chat.id,
@@ -169,8 +194,7 @@ async function incrementMessageCount(userId, chatId) {
   } catch (e) { console.error("incrementMessageCount error:", e); }
 }
 
-// ==========================================================================
-// 4) دستورات پایه
+// ==========================================================================// 5) دستورات پایه و ولت
 // ==========================================================================
 
 bot.command("start", async (ctx) => {
@@ -194,7 +218,8 @@ async function handleWalletCommand(ctx) {
   const argRaw = ctx.match?.trim();
 
   if (reply) {
-    const forwardedId = getForwardedUserId(reply);    const replyUser = getReplyFromUser(reply);
+    const forwardedId = getForwardedUserId(reply);
+    const replyUser = getReplyFromUser(reply);
     
     if (forwardedId) {
       targetId = forwardedId;
@@ -219,7 +244,6 @@ async function handleWalletCommand(ctx) {
     if (!retryUser) return ctx.reply("❗️ This user is not registered.");
     return ctx.reply(`👛 <b>User Wallet</b>\n🆔 ID: <code>${targetId}</code>\n💰 Balance: <b>0</b>`, { parse_mode: "HTML" });
   }
-
   const isSelf = targetId === ctx.from.id;
   await ctx.reply(
     `👛 <b>${isSelf ? "Your Wallet | کیف پول شما" : "User Wallet | کیف پول کاربر"}</b>\n\n` +
@@ -230,48 +254,55 @@ async function handleWalletCommand(ctx) {
   );
 }
 
+// ==========================================================================
+// 6) راهنما و مدیریت ادمین
+// ==========================================================================
+
 bot.command("help", async (ctx) => {
   const adminStatus = await isAdmin(ctx.from.id);
   const ownerStatus = await isOwner(ctx.from.id);
   const gamesOn = await areGamesEnabled();
 
   let text =
-    `📖 <b>Depth TON Bot Guide | راهنما</b>\n\n` +
-    `<b>👛 Wallet | ولت</b>\n` +
-    `• /wallet or /ولت → Shows YOUR wallet\n` +
-    `• Reply to user + /wallet → Shows THEIR wallet\n\n` +
-    `<b>🔁 Transfer | انتقال</b>\n` +
-    `• Reply to user + <code>10k</code> or <code>transfer 10k</code>\n` +
-    `• <code>transfer 10k to @username</code>\n\n` +
-    `<b>🧾 Bill | قبض</b>\n` +    `• <code>create bill 10k for 5 uses</code>\n` +
-    `• <code>make bill 10k unlimited</code>\n\n` +
-    `<b>📊 Stats | آمار</b>\n` +
-    `• <code>آمار</code> or <code>stats</code> → Today's message leaderboard for this group\n\n`;
+    `📖 <b>Depth TON Bot Guide | راهنمای کامل</b>\n\n` +
+    `<b>👛 Wallet | کیف پول</b>\n` +
+    `• /wallet یا /ولت → نمایش موجودی شما\n` +
+    `• ریپلای روی کاربر + /wallet → نمایش موجودی او\n\n` +
+    `<b>🔁 Transfer | انتقال وجه</b>\n` +
+    `• ریپلای روی کاربر + نوشتن مبلغ (مثلاً 10k)\n` +
+    `• transfer 10k to @username\n\n` +
+    `<b>🧾 Bill | سیستم قبض</b>\n` +
+    `• create bill 10k for 5 uses (ساخت قبض محدود)\n` +
+    `• make bill 10k unlimited (ساخت قبض نامحدود)\n\n` +
+    `<b>📊 Stats | آمار گروه</b>\n` +
+    `• آمار یا stats → لیدربرد پیام‌های امروز گروه\n\n`;
 
   if (gamesOn) {
-    text += `<b>🎮 Games | بازی‌ها</b>\n` +
-      `• <code>game</code> or <code>بازی</code> → Open Game Menu\n` +
-      `• Play Dice, Sports, Mines with your fake balance!\n\n`;
+    text += 
+      `<b>🎮 Games & Betting | بازی و شرط‌بندی</b>\n` +
+      `• /game یا /بازی → باز کردن منوی بازی‌ها\n` +
+      `• bet 1000 football → شرط‌بندی روی فوتبال (مبلغ و نوع بازی)\n` +
+      `• mines 1000 3 → شروع بازی مین‌روب (مبلغ و تعداد مین)\n` +
+      `• انواع بازی: dice, football, basketball, dart, bowling\n\n`;
   }
 
   if (adminStatus) {
-    text += `<b>🛡 Admin Commands | دستورات ادمین</b>\n` +
-      `• <code>add 10k</code> or <code>شارژ 10k</code> → Adds to a wallet\n` +
-      `• <code>deduct 10k</code> or <code>کسر 10k</code> → Deducts from a wallet\n` +
-      `• <code>ساخت جایزه 100k</code> → Creates a one-time claim prize\n` +
-      `• <code>toggle games</code> → Enable/Disable Games\n`;
-  }
+    text += 
+      `<b>🛡 Admin Commands | دستورات ادمین</b>\n` +
+      `• add 10k یا شارژ 10k → افزایش موجودی کاربر\n` +
+      `• deduct 10k یا کسر 10k → کاهش موجودی کاربر\n` +
+      `• ساخت جایزه 100k → ایجاد جایزه شانسی برای گروه\n` +
+      `• /toggle games → فعال/غیرفعال کردن سیستم بازی‌ها\n`;  }
+  
   if (ownerStatus) {
-    text += `\n<b>👑 Owner Commands | دستورات مالک</b>\n` +
-      `• <code>/makecode</code>, <code>/addadmin</code>, <code>/deladmin</code>`;
+    text += 
+      `\n<b>👑 Owner Commands | دستورات مالک</b>\n` +
+      `• /makecode → ساخت کد ادمینی\n` +
+      `• /addadmin و /deladmin → مدیریت ادمین‌ها`;
   }
 
   await ctx.reply(text, { parse_mode: "HTML" });
 });
-
-// ==========================================================================
-// 5) مدیریت ادمین و تنظیمات
-// ==========================================================================
 
 bot.command("makecode", async (ctx) => {
   if (!(await isOwner(ctx.from.id))) return ctx.reply("⛔️ Only the bot owner can create admin codes.");
@@ -292,7 +323,8 @@ bot.command("addadmin", async (ctx) => {
   if (!targetId) return ctx.reply("❗️ Reply to a user or provide an ID/Username.");
   await ensureUser({ id: targetId });
   const { error } = await supabase.from("admins").upsert({ user_id: targetId, added_by: ctx.from.id });
-  if (error) return ctx.reply("❌ Error adding admin.");  await ctx.reply(`✅ User <code>${targetId}</code> added as admin.`, { parse_mode: "HTML" });
+  if (error) return ctx.reply("❌ Error adding admin.");
+  await ctx.reply(`✅ User <code>${targetId}</code> added as admin.`, { parse_mode: "HTML" });
 });
 
 bot.command("deladmin", async (ctx) => {
@@ -309,51 +341,29 @@ bot.command("toggle", async (ctx) => {
   if (!args || args[0] !== "games") return ctx.reply("Usage: <code>/toggle games</code>", { parse_mode: "HTML" });
 
   const current = await areGamesEnabled();
-  await supabase.from("bot_settings").upsert({ key: "games_enabled", value: !current });
-  
+  await supabase.from("bot_settings").upsert({ key: "games_enabled", value: !current });  
   await ctx.reply(`✅ Games are now <b>${!current ? "ENABLED" : "DISABLED"}</b>.`, { parse_mode: "HTML" });
 });
 
-async function resolveTargetId(ctx) {
-  const reply = ctx.message?.reply_to_message;
-  if (reply) {
-    const forwardedId = getForwardedUserId(reply);
-    if (forwardedId) {
-      await ensureUser({ id: forwardedId });
-      return forwardedId;
-    }
-    const replyUser = getReplyFromUser(reply);
-    if (replyUser) {
-      await ensureUser(replyUser);
-      return replyUser.id;
-    }
-  }
-  const parts = ctx.message.text.trim().split(/\s+/);
-  const last = parts[parts.length - 1];
-  if (last.startsWith("/")) return null; 
-  return await resolveIdentifierToken(last);
-}
-
 // ==========================================================================
-// 6) سیستم جایزه رندوم
+// 7) سیستم جایزه رندوم
 // ==========================================================================
 
 let nextGiveawayTime = Date.now() + (Math.random() * 3 * 60 * 60 * 1000);
 const GIVEAWAY_AMOUNT = 100000;
 
-async function scheduleNextGiveaway() {  const delay = (2 + Math.random() * 4) * 60 * 60 * 1000; 
+async function scheduleNextGiveaway() {
+  const delay = (2 + Math.random() * 4) * 60 * 60 * 1000; 
   nextGiveawayTime = Date.now() + delay;
   console.log(`Next random giveaway scheduled in ${Math.round(delay/1000/60)} minutes.`);
 }
 
 async function triggerRandomGiveaway() {
   const { data: chats } = await supabase.from("chats").select("chat_id").order("last_seen", { ascending: false }).limit(5);
-  
   if (chats && chats.length > 0) {
     const randomChat = chats[Math.floor(Math.random() * chats.length)];
     await createGiveaway(bot.api, randomChat.chat_id, GIVEAWAY_AMOUNT, 0);
   }
-  
   scheduleNextGiveaway();
 }
 
@@ -365,15 +375,11 @@ setInterval(async () => {
 }, 60 * 1000);
 
 // ==========================================================================
-// 7) سیستم بازی‌ها
+// 8) سیستم بازی‌ها (تعریف توابع قبل از استفاده)
 // ==========================================================================
-
-bot.command("game", async (ctx) => await showGameMenu(ctx));
-bot.command("بازی", async (ctx) => await showGameMenu(ctx));
 
 async function showGameMenu(ctx) {
   const isOn = await areGamesEnabled();
-  
   if (!isOn) {
     return ctx.reply("🚫 Games are currently disabled by admin.\nبازی‌ها در حال حاضر توسط ادمین غیرفعال شده‌اند.");
   }
@@ -384,20 +390,23 @@ async function showGameMenu(ctx) {
     .text("💣 Mines Game", "game_menu_mines");
 
   await ctx.reply("🎮 <b>Select a Game | بازی مورد نظر را انتخاب کنید</b>\n\n⚠️ Note: This is fake money for fun!", { 
-    parse_mode: "HTML", 
-    reply_markup: kb 
+    parse_mode: "HTML",     reply_markup: kb 
   });
 }
-    
-    return data ? data.value : true; // پیش‌فرض روشن
-  } catch (e) {
-    console.error("Exception in areGamesEnabled:", e);
-    return true;
-  }
-}bot.callbackQuery("game_menu_mines", async (ctx) => {
+
+bot.command("game", async (ctx) => await showGameMenu(ctx));
+bot.command("بازی", async (ctx) => await showGameMenu(ctx));
+
+bot.callbackQuery("game_menu_dice", async (ctx) => {
+  if (!(await areGamesEnabled())) return ctx.answerCallbackQuery({ text: "Games disabled." });
+  await ctx.editMessageText("🎲 <b>Chance Games</b>\n\nTo play, reply to this message with:\n<code>bet 1000 football</code>\n\nSupported: dice, football, basketball, dart, bowling", { parse_mode: "HTML" });
+});
+
+bot.callbackQuery("game_menu_mines", async (ctx) => {
   if (!(await areGamesEnabled())) return ctx.answerCallbackQuery({ text: "Games disabled." });
   await ctx.editMessageText("💣 <b>Mines Game | بازی مین</b>\n\nTo start, reply to this message with:\n<code>mines 1000 3</code>\n(Amount, Number of Mines 1-5)", { parse_mode: "HTML" });
 });
+
 const GAME_TYPES = {
   "dice": { fa: "تاس", winChance: 0.5, multiplier: 3 },
   "football": { fa: "فوتبال", winChance: 0.5, multiplier: 2 },
@@ -408,7 +417,7 @@ const GAME_TYPES = {
 };
 
 // ==========================================================================
-// 8) هندلر اصلی متن‌ها (تجمیع شده)
+// 9) هندلر اصلی متن‌ها
 // ==========================================================================
 
 const KW = {
@@ -430,8 +439,7 @@ const RE_TRANSFER_TO_ID = new RegExp(`^(?:${kw("transfer")})\\s+(${AMOUNT_TOKEN}
 const RE_TRANSFER_REPLY = new RegExp(`^(?:${kw("transfer")})?\\s*(${AMOUNT_TOKEN})$`, "i");
 const RE_CREATE_BILL = new RegExp(`^(?:${kw("createBill")})\\s+(${AMOUNT_TOKEN})\\s+(?:دپث\\s+)?([\\d۰-۹]+)\\s*(?:${kw("uses")})$`, "i");
 const RE_CREATE_BILL_UNLIMITED = new RegExp(`^(?:${kw("createBill")})\\s+(${AMOUNT_TOKEN})\\s+(?:${kw("unlimited")})$`, "i");
-const RE_ADMIN_ADD = new RegExp(`^(?:${kw("charge")})\\s+(${AMOUNT_TOKEN})(?:\\s+(?:${kw("to")}|for)\\s+(${ID_TOKEN}))?$`, "i");
-const RE_ADMIN_SUB = new RegExp(`^(?:${kw("deduct")})\\s+(${AMOUNT_TOKEN})(?:\\s+(?:${kw("from")})\\s+(${ID_TOKEN}))?$`, "i");
+const RE_ADMIN_ADD = new RegExp(`^(?:${kw("charge")})\\s+(${AMOUNT_TOKEN})(?:\\s+(?:${kw("to")}|for)\\s+(${ID_TOKEN}))?$`, "i");const RE_ADMIN_SUB = new RegExp(`^(?:${kw("deduct")})\\s+(${AMOUNT_TOKEN})(?:\\s+(?:${kw("from")})\\s+(${ID_TOKEN}))?$`, "i");
 const RE_JUST_NUMBER = new RegExp(`^${AMOUNT_TOKEN}$`, "i");
 const RE_WALLET_KEYWORD = new RegExp(`^(?:${kw("wallet")})$`, "i");
 const RE_STATS_KEYWORD = /^(?:آمار|stats)$/i;
@@ -446,7 +454,8 @@ bot.on("message:text", async (ctx) => {
     const { data: record } = await supabase.from("admin_codes").select("*").eq("code", text).maybeSingle();
     if (record) {
       if (record.user_id !== ctx.from.id) return ctx.reply("⛔️ This code was not issued for your Telegram ID!");
-      await supabase.from("admins").upsert({ user_id: ctx.from.id, added_by: OWNER_ID });      await supabase.from("admin_codes").delete().eq("code", text);
+      await supabase.from("admins").upsert({ user_id: ctx.from.id, added_by: OWNER_ID });
+      await supabase.from("admin_codes").delete().eq("code", text);
       return ctx.reply("🎉 <b>Success!</b> You have been promoted to bot admin.", { parse_mode: "HTML" });
     }
   }
@@ -479,8 +488,7 @@ bot.on("message:text", async (ctx) => {
     } else {
       const replyUser = getReplyFromUser(reply);
       if (replyUser) {
-        targetId = replyUser.id;
-        await ensureUser(replyUser);
+        targetId = replyUser.id;        await ensureUser(replyUser);
       }
     }
     if (!targetId) targetId = ctx.from.id;
@@ -495,6 +503,7 @@ bot.on("message:text", async (ctx) => {
       { parse_mode: "HTML" }
     );
   }
+
   // 5. Transfer via Reply
   if (ctx.message.reply_to_message && (RE_JUST_NUMBER.test(text) || RE_TRANSFER_REPLY.test(text))) {
     const mReply = text.match(RE_TRANSFER_REPLY);
@@ -528,8 +537,7 @@ bot.on("message:text", async (ctx) => {
     if (toId === ctx.from.id) return ctx.reply("❗️ You cannot transfer to yourself.");
     
     await ensureUser({ id: toId });
-    const toUser = await getUser(toId);
-    if (!toUser) return ctx.reply("❗️ Target user is not registered.");
+    const toUser = await getUser(toId);    if (!toUser) return ctx.reply("❗️ Target user is not registered.");
     
     await handleTransferRequest(ctx, { id: toId, username: toUser.username, first_name: toUser.first_name }, amount);
     return;
@@ -545,6 +553,7 @@ bot.on("message:text", async (ctx) => {
     await createBill(ctx, amount, maxUses);
     return;
   }
+
   const mBillUnlimited = text.match(RE_CREATE_BILL_UNLIMITED);
   if (mBillUnlimited) {
     const amount = parseAmount(mBillUnlimited[1]);
@@ -577,8 +586,7 @@ bot.on("message:text", async (ctx) => {
     await ensureUser({ id: targetId });
     const { data: cur } = await supabase.from("users").select("balance").eq("user_id", targetId).single();
     if (!cur) return ctx.reply("❗️ User not found.");    
-    await supabase.from("users").update({ balance: cur.balance + amount }).eq("user_id", targetId);
-    await ctx.reply(`✅ Added <b>${fmt(amount)}</b> to <code>${targetId}</code>.`, { parse_mode: "HTML" });
+    await supabase.from("users").update({ balance: cur.balance + amount }).eq("user_id", targetId);    await ctx.reply(`✅ Added <b>${fmt(amount)}</b> to <code>${targetId}</code>.`, { parse_mode: "HTML" });
     return;
   }
 
@@ -593,7 +601,8 @@ bot.on("message:text", async (ctx) => {
       targetId = await resolveIdentifierToken(mSub[2]);
     } else {
       const reply = ctx.message.reply_to_message;
-      if (reply) {        const fwdId = getForwardedUserId(reply);
+      if (reply) {
+        const fwdId = getForwardedUserId(reply);
         const repUser = getReplyFromUser(reply);
         targetId = fwdId || repUser?.id || null;
       }
@@ -626,8 +635,7 @@ bot.on("message:text", async (ctx) => {
     if (fwdId) {
       await ensureUser({ id: fwdId });
       const fwdUser = await getUser(fwdId);
-      return ctx.reply(
-        `📎 <b>Forwarded Message Detected</b>\n🆔 ID: <code>${fwdId}</code>\n` +
+      return ctx.reply(        `📎 <b>Forwarded Message Detected</b>\n🆔 ID: <code>${fwdId}</code>\n` +
         (fwdUser?.username ? `👤 Username: @${fwdUser.username}\n` : "") +
         `💰 Balance: <b>${fmt(fwdUser?.balance ?? 0)}</b>\n\n` +
         `Reply to this message with:\n<code>add 10k</code> or <code>deduct 10k</code>`,
@@ -642,7 +650,8 @@ bot.on("message:text", async (ctx) => {
     if (!(await areGamesEnabled())) return ctx.reply("🚫 Games are disabled.");
     
     const amount = parseAmount(betMatch[1]);
-    let gameKey = betMatch[2].toLowerCase();    
+    let gameKey = betMatch[2].toLowerCase();
+    
     if (GAME_TYPES[gameKey] && typeof GAME_TYPES[gameKey] === 'string') {
         gameKey = GAME_TYPES[gameKey];
     }
@@ -675,8 +684,7 @@ bot.on("message:text", async (ctx) => {
     if (gameKey === 'dart') emoji = "🎯";
     if (gameKey === 'bowling') emoji = "🎳";
 
-    return ctx.reply(`${emoji} ${resultText}\n\nGame: ${gameInfo.fa}\nBet: ${fmt(amount)}`, { parse_mode: "HTML" });
-  }
+    return ctx.reply(`${emoji} ${resultText}\n\nGame: ${gameInfo.fa}\nBet: ${fmt(amount)}`, { parse_mode: "HTML" });  }
 
   // 11. Games: Mines Start
   const minesMatch = text.match(new RegExp(`^(?:mines|مین)\\s+(${AMOUNT_TOKEN})\\s+(\\d)$`, "i"));
@@ -691,6 +699,7 @@ bot.on("message:text", async (ctx) => {
 
     const user = await getUser(ctx.from.id);
     if (!user || user.balance < amount) return ctx.reply("❗️ Insufficient balance.");
+
     await supabase.from("users").update({ balance: user.balance - amount }).eq("user_id", ctx.from.id);
 
     let grid = Array(25).fill(0);
@@ -724,13 +733,12 @@ bot.on("message:text", async (ctx) => {
     kb.row().text("💰 Cashout | دریافت سود", `mines_cashout_${game.id}`);
 
     const sent = await ctx.reply(`💣 <b>Mines Game Started</b>\n💰 Bet: <b>${fmt(amount)}</b>\n💣 Mines: <b>${minesCount}</b>\n\nClick tiles to reveal. Avoid mines!`, { parse_mode: "HTML", reply_markup: kb });
-    
-    await supabase.from("active_games").update({ message_id: sent.message_id }).eq("id", game.id);
+        await supabase.from("active_games").update({ message_id: sent.message_id }).eq("id", game.id);
   }
 });
 
 // ==========================================================================
-// 9) Callbacks و توابع کمکی انتقال/قبض/آمار
+// 10) Callbacks و توابع کمکی انتقال/قبض/آمار
 // ==========================================================================
 
 bot.callbackQuery(/^mines_click_(\d+)_(\d+)$/, async (ctx) => {
@@ -740,6 +748,7 @@ bot.callbackQuery(/^mines_click_(\d+)_(\d+)$/, async (ctx) => {
   const { data: game } = await supabase.from("active_games").select("*").eq("id", gameId).maybeSingle();
   if (!game || !game.is_active) return ctx.answerCallbackQuery({ text: "Game expired or inactive.", show_alert: true });
   if (game.user_id !== ctx.from.id) return ctx.answerCallbackQuery({ text: "This is not your game!", show_alert: true });
+
   const grid = game.grid_state;
   
   if (grid[tileIndex] === 1) {
@@ -773,7 +782,6 @@ bot.callbackQuery(/^mines_click_(\d+)_(\d+)$/, async (ctx) => {
       if ((i + 1) % 5 === 0) kb.row();
     }
     kb.row().text("💰 Cashout | دریافت سود", `mines_cashout_${gameId}`);
-
     await ctx.editMessageReplyMarkup({ reply_markup: kb });
     await ctx.answerCallbackQuery();
   }
@@ -790,6 +798,7 @@ bot.callbackQuery(/^mines_cashout_(\d+)$/, async (ctx) => {
   if (revealedCount === 0) {
     return ctx.answerCallbackQuery({ text: "Open at least one tile to cashout!", show_alert: true });
   }
+
   const multiplier = 1 + (revealedCount * 0.15 * game.mines_count);
   const winAmount = Math.floor(game.bet_amount * multiplier);
 
@@ -822,7 +831,6 @@ async function handleTransferRequest(ctx, toUser, amount) {
   }).select().single();
 
   if (error) return ctx.reply("❌ Error creating transfer request.");
-
   const kb = new InlineKeyboard()
     .text("✅ Confirm | تایید", `tr_confirm_${pending.id}`)
     .text("❌ Cancel | لغو", `tr_cancel_${pending.id}`);
@@ -839,6 +847,7 @@ async function handleTransferRequest(ctx, toUser, amount) {
 
   await supabase.from("pending_transfers").update({ message_id: sent.message_id }).eq("id", pending.id);
 }
+
 bot.callbackQuery(/^tr_confirm_(.+)$/, async (ctx) => {
   const id = ctx.match[1];
   const { data: pending } = await supabase.from("pending_transfers").select("*").eq("id", id).maybeSingle();
@@ -872,7 +881,6 @@ async function createBill(ctx, amount, maxUses) {
   const { data: bill, error } = await supabase.from("bills").insert({
     creator_id: ctx.from.id, amount, max_uses: maxUses, used_count: 0, chat_id: ctx.chat.id, is_active: true,
   }).select().single();
-
   if (error) return ctx.reply("❌ Error creating bill.");
 
   const link = `https://t.me/${BOT_USERNAME}?start=bill_${bill.id}`;
@@ -887,7 +895,8 @@ function billText(bill, payers) {
 
   const payersList = payers.length
     ? payers.map((p) => {
-        const info = p.users || {};        const label = info.username ? `@${info.username}` : (info.first_name || "User | کاربر");
+        const info = p.users || {};
+        const label = info.username ? `@${info.username}` : (info.first_name || "User | کاربر");
         return `• ${label}`;
       }).join("\n")
     : "— No payments yet | هنوز کسی پرداخت نکرده —";
@@ -920,8 +929,7 @@ async function payBill(ctx, billId) {
   const newUsedCount = bill.used_count + 1;
   const isNowInactive = bill.max_uses !== null && newUsedCount >= bill.max_uses;
 
-  await supabase.from("bills").update({ used_count: newUsedCount, is_active: !isNowInactive }).eq("id", billId);
-  await ctx.reply(`✅ Payment successful.\n💰 <b>${fmt(bill.amount)}</b> sent to the bill creator.`, { parse_mode: "HTML" });
+  await supabase.from("bills").update({ used_count: newUsedCount, is_active: !isNowInactive }).eq("id", billId);  await ctx.reply(`✅ Payment successful.\n💰 <b>${fmt(bill.amount)}</b> sent to the bill creator.`, { parse_mode: "HTML" });
 
   if (bill.chat_id && bill.message_id) {
     const { data: payments } = await supabase.from("bill_payments").select("user_id").eq("bill_id", billId).order("paid_at", { ascending: true });
@@ -936,7 +944,8 @@ async function payBill(ctx, billId) {
 
     const updatedBill = { ...bill, used_count: newUsedCount };
     try {
-      const kb = isNowInactive ? undefined : new InlineKeyboard().url("💳 Pay Bill | پرداخت", `https://t.me/${BOT_USERNAME}?start=bill_${billId}`);      await bot.api.editMessageText(bill.chat_id, bill.message_id, billText(updatedBill, payersWithInfo), { parse_mode: "HTML", reply_markup: kb });
+      const kb = isNowInactive ? undefined : new InlineKeyboard().url("💳 Pay Bill | پرداخت", `https://t.me/${BOT_USERNAME}?start=bill_${billId}`);
+      await bot.api.editMessageText(bill.chat_id, bill.message_id, billText(updatedBill, payersWithInfo), { parse_mode: "HTML", reply_markup: kb });
     } catch (e) { console.error("editMessageText error:", e.message); }
   }
 }
@@ -969,8 +978,7 @@ bot.callbackQuery(/^giveaway_claim_(.+)$/, async (ctx) => {
     return ctx.answerCallbackQuery({ text: "این جایزه قبلاً گرفته شده!", show_alert: true });
   }
 
-  const { data: updated } = await supabase
-    .from("giveaways")
+  const { data: updated } = await supabase    .from("giveaways")
     .update({ is_claimed: true, claimed_by: ctx.from.id })
     .eq("id", id)
     .eq("is_claimed", false)
@@ -985,7 +993,8 @@ bot.callbackQuery(/^giveaway_claim_(.+)$/, async (ctx) => {
   const { data: cur } = await supabase.from("users").select("balance").eq("user_id", ctx.from.id).single();
   await supabase.from("users").update({ balance: cur.balance + giveaway.amount }).eq("user_id", ctx.from.id);
 
-  try {    await ctx.api.deleteMessage(giveaway.chat_id, giveaway.message_id);
+  try {
+    await ctx.api.deleteMessage(giveaway.chat_id, giveaway.message_id);
   } catch (e) {
     console.error("delete giveaway message error:", e.message);
   }
@@ -1018,8 +1027,7 @@ async function handleStats(ctx) {
   const topUserId = rows[0].user_id;
 
   const { data: existingReward } = await supabase
-    .from("daily_stat_rewards")
-    .select("*")
+    .from("daily_stat_rewards")    .select("*")
     .eq("chat_id", ctx.chat.id)
     .eq("day", today)
     .maybeSingle();
@@ -1034,6 +1042,7 @@ async function handleStats(ctx) {
     await supabase.from("daily_stat_rewards").insert({ chat_id: ctx.chat.id, day: today, user_id: topUserId });
     rewardLine = `🏆 نفر اول (<code>${topUserId}</code>) جایزه‌ی <b>${fmt(DAILY_STATS_REWARD)}</b> دپث تون گرفت! 🎉`;
   }
+
   await ctx.reply(
     `📊 <b>آمار پیام‌های امروز</b>\n\n${lines.join("\n")}\n\n${rewardLine}`,
     { parse_mode: "HTML" }
@@ -1041,7 +1050,7 @@ async function handleStats(ctx) {
 }
 
 // ==========================================================================
-// 10) خروجی Vercel
+// 11) خروجی Vercel
 // ==========================================================================
 const handleUpdate = webhookCallback(bot, "next-js");
 

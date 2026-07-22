@@ -270,62 +270,76 @@ async function handleWalletCommand(ctx) {
 // ==========================================================================
 // 5.1) دستور /help
 // ==========================================================================
-// Replace existing /help handler with this updated, example-rich version
+// Replace existing /help handler with this chunked version
 bot.command("help", async (ctx) => {
-  const adminStatus = await isAdmin(ctx.from.id);
-  const ownerStatus = await isOwner(ctx.from.id);
+  try {
+    const adminStatus = await isAdmin(ctx.from.id).catch(() => false);
+    const ownerStatus = await isOwner(ctx.from.id).catch(() => false);
 
-  const text =
-`📖 <b>Depth TON Bot — راهنما و مثال‌ها</b>
+    const sections = [];
 
-<b>👛 والِت (Wallet)</b>
+    sections.push(
+`📖 <b>Depth TON Bot — راهنما و مثال‌ها</b>`
+    );
+
+    sections.push(
+`<b>👛 والِت (Wallet)</b>
 • /wallet یا /ولت → نمایش موجودی شما
   مثال: <code>/wallet</code>
 • نمایش موجودیِ دیگران با ریپلای یا آیدی/یوزرنیم:
   مثال ریپلای: ریپلای روی پیام کاربر + <code>/wallet</code>
-  مثال با آیدی/یوزرنیم: <code>/wallet 123456789</code> یا <code>/wallet @username</code>
+  مثال با آیدی/یوزرنیم: <code>/wallet 123456789</code> یا <code>/wallet @username</code>`
+    );
 
-<b>🔁 انتقال (Transfer)</b>
+    sections.push(
+`<b>🔁 انتقال (Transfer)</b>
 • ریپلای روی پیام کاربر و نوشتن مبلغ:
   مثال: ریپلای روی پیام کاربر + پیام: <code>10k</code>  (یا <code>انتقال 10k</code>)
 • ارسال مستقیم با یوزرنیم/آیدی:
   مثال: <code>انتقال 5k به @username</code>
   یا: <code>transfer 5000 to 123456789</code>
-• تایید انتقال توسط دکمهٔ شیشه‌ای: فرستنده باید دکمهٔ «تایید» را بزند تا انتقال انجام شود.
+• تایید انتقال توسط دکمهٔ شیشه‌ای: فرستنده باید دکمهٔ «تایید» را بزند تا انتقال انجام شود.`
+    );
 
-<b>🧾 قبض (Bill)</b>
+    sections.push(
+`<b>🧾 قبض (Bill)</b>
 • ایجاد قبض با محدودیت دفعات:
   مثال: <code>create bill 10k for 5 uses</code>
   (یا به فارسی: <code>ساخت قبض 10k 5 بار مصرف</code>)
 • ایجاد قبض بدون محدودیت:
   مثال: <code>make bill 10k unlimited</code>
 • پرداخت قبض:
-  - وقتی قبض ساخته شود لینک پرداخت ظاهر می‌شود؛ روی آن کلیک کنید یا /start=bill_<id> را باز کنید.
+  - وقتی قبض ساخته شود لینک پرداخت ظاهر می‌شود؛ روی آن کلیک کنید یا /start=bill_<id> را باز کنید.`
+    );
 
-<b>📊 آمار روزانه (Stats)</b>
+    sections.push(
+`<b>📊 آمار روزانه (Stats)</b>
 • نمایش لیدربورد پیام‌های آن روز در گروه:
   مثال: <code>آمار</code> یا <code>stats</code>
-• نفر اول (اولین بار در روز) به‌صورت خودکار جایزه می‌گیرد (پیش‌فرض: <b>500,000 دپث</b>).
+• نفر اول (اولین بار در روز) به‌صورت خودکار جایزه می‌گیرد (پیش‌فرض: <b>500,000 دپث</b>).`
+    );
 
-<b>🎁 جایزهٔ شانسی / Giveaway</b>
+    sections.push(
+`<b>🎁 جایزهٔ شانسی / Giveaway</b>
 • جایزهٔ رندوم توسط سیستم در گروه‌ها ارسال می‌شود (در هر پیام احتمال کمی دارد).
 • ادمین می‌تواند جایزهٔ دستی بسازد:
   مثال: <code>ساخت جایزه 100k</code>
-• اولین نفری که دکمه را بزند جایزه را می‌گیرد و پیام حذف می‌شود.
+• اولین نفری که دکمه را بزند جایزه را می‌گیرد و پیام حذف می‌شود.`
+    );
 
-<b>🕹 بازی‌ها (Games)</b>
+    sections.push(
+`<b>🕹 بازی‌ها (Games)</b>
 • بازی با ایموجی‌ها (انتخاب یک ایموجی):
   مثال: <code>/play فوتبال 10k</code> یا <code>/play ایموجی 5k</code>
   - دکمه‌های شیشه‌ای با ایموجی نمایش داده می‌شود؛ روی ایموجیِ انتخابی کلیک کنید.
 • مین (Mines) — بازی با گرید دکمه‌ای:
   مثال: <code>/play مین 5000</code> یا <code>بازی مین 5000</code>
   - پس از قرار دادن شرط، گرید نشان داده می‌شود؛ خانه‌ها را باز کنید، در هر باخت شرط می‌سوزد.
-  - برای دریافت موجودی فعلی بازی: دستور برداشت مثال: <code>/cashout_&lt;gameId&gt;</code>
-    (در پیام مین پس از باز کردن خانه‌ها، شناسهٔ بازی نمایش داده می‌شود؛ یا از پیام ربات استفاده کنید.)
+  - برای برداشت: <code>/cashout_<gameId></code> (شناسهٔ بازی در پیام ربات نمایش داده می‌شود).`
+    );
 
-• نکتهٔ جک‌پات: درصد کوچکی از هر شرط به جک‌پات چت اضافه می‌شود و احتمال بسیار نادری وجود دارد که یک بازیکن جک‌پات را ببرد.
-
-<b>🛡 دستورات ادمین</b>
+    sections.push(
+`<b>🛡 دستورات ادمین</b>
 (فقط ادمین‌ها می‌توانند اجرا کنند)
 • شارژ کاربر:
   مثال: <code>شارژ 10k @username</code> یا ریپلای + <code>add 10k</code>
@@ -335,33 +349,54 @@ bot.command("help", async (ctx) => {
   مثال: <code>ساخت جایزه 100k</code>
 • فعال/غیرفعال کردن قابلیت‌ها:
   مثال فعال: <code>فعال کن giveaways</code>
-  مثال غیرفعال: <code>غیرفعال کن games</code>
-• پاک‌سازی giveawayهای فعال در چت (در صورت اضافه‌شدن دستور clear_giveaways):
-  مثال: <code>/clear_giveaways</code>
+  مثال غیرفعال: <code>غیرفعال کن games</code>`
+    );
 
-<b>👑 دستورات مالک (Owner)</b>
+    if (ownerStatus) {
+      sections.push(
+`<b>👑 دستورات مالک (Owner)</b>
 • ساخت کد ادمین برای کاربر:
   مثال (مالک اجرا می‌کند): <code>/makecode</code> (سپس کد ۱۰ رقمی تولید می‌شود)
 • افزودن ادمین مستقیم:
   مثال: <code>/addadmin &lt;id|@username&gt;</code>
 • حذف ادمین:
-  مثال: <code>/deladmin &lt;id|@username&gt;</code>
+  مثال: <code>/deladmin &lt;id|@username&gt;</code>`
+      );
+    }
 
-<b>🔎 روش‌های شناسایی هدف</b>
+    sections.push(
+`<b>🔎 روش‌های شناسایی هدف</b>
 • برای آدرس‌دهی به کاربر می‌توانید:
   - ریپلای روی پیام کاربر
   - فوروارد پیامِ کاربر به پیوی ربات (برای گرفتن ID)
-  - استفاده از آیدی عددی یا یوزرنیم: <code>@username</code> یا <code>123456789</code>
+  - استفاده از آیدی عددی یا یوزرنیم: <code>@username</code> یا <code>123456789</code>`
+    );
 
-<b>⚠️ نکات مهم</b>
-• تمام واحدها در «دپث» هستند و این والت کاملاً مجازی است — هیچ ارزش واقعی ندارد.  
-• برخی عملیات مالی از طریق RPCهای دیتابیس انجام می‌شود؛ اگر با خطا مواجه شدید لاگ‌ها را چک کنید.  
-• در گروه‌ها برای شنیدن همهٔ پیام‌ها لازم است Privacy در BotFather غیرفعال (Disable) شده باشد — در غیر این صورت بات فقط کامندها و ریپلای/منشن‌ها را می‌بیند.  
+    sections.push(
+`<b>⚠️ نکات مهم</b>
+• تمام واحدها در «دپث» هستند و این والت کاملاً مجازی است — هیچ ارزش واقعی ندارد.
 • برای حذف یا ویرایش پیام‌هایی که ربات ایجاد کرده، ربات باید در گروه ادمین با مجوز حذف پیام باشد.
+• اگر پیام کار نمی‌کند: احتمال دارد متن خیلی طولانی باشد — این تابع متن را به بخش‌های کوچک تقسیم می‌کند.`
+    );
 
-اگر می‌خواید من این راهنما را به‌صورت پیام خوش‌فرمت‌تر (مثلاً چند پیام جدا یا منوی دکمه‌ای) بسازم تا در گروه منتشر کنید بگو؛ یا اگر دستور یا مثالی کم/زیاد هست تغییر بدم، بفرست تا اصلاح کنم.`;
-
-  await ctx.reply(text, { parse_mode: "HTML" });
+    // send sections in chunks (combine adjacent sections until safe limit)
+    const CHUNK_LIMIT = 3500; // safe margin under Telegram's ~4096
+    let current = "";
+    for (const sec of sections) {
+      if ((current + "\n\n" + sec).length > CHUNK_LIMIT) {
+        // send current
+        if (current.trim()) await ctx.reply(current, { parse_mode: "HTML" }).catch(e => console.error("help send error:", e));
+        current = sec;
+      } else {
+        current = current ? (current + "\n\n" + sec) : sec;
+      }
+    }
+    if (current.trim()) await ctx.reply(current, { parse_mode: "HTML" }).catch(e => console.error("help send error:", e));
+  } catch (err) {
+    console.error("help handler error:", err);
+    // fallback: short help
+    await ctx.reply("📖 Help error — لطفا بعدا تلاش کنید یا لاگ‌ها را بررسی کنید.");
+  }
 });
 // ==========================================================================
 // 6) مدیریت ادمین‌ها

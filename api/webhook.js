@@ -375,46 +375,147 @@ setInterval(async () => {
 }, 60 * 1000);
 
 // ==========================================================================
-// 8) سیستم بازی‌ها (تعریف توابع قبل از استفاده)
+// ==========================================================================
+// 8) سیستم بازی‌های جدید (با انیمیشن واقعی تلگرام)
 // ==========================================================================
 
 async function showGameMenu(ctx) {
   const isOn = await areGamesEnabled();
   if (!isOn) {
-    return ctx.reply("🚫 Games are currently disabled by admin.\nبازی‌ها در حال حاضر توسط ادمین غیرفعال شده‌اند.");
+    return ctx.reply("🚫 Games are currently disabled by admin.");
   }
   
   const kb = new InlineKeyboard()
-    .text("🎲 Dice & Sports", "game_menu_dice")
+    .text("⚽ Football Duel", "game_type_football")
     .row()
-    .text("💣 Mines Game", "game_menu_mines");
+    .text("🎲 Dice Roll", "game_type_dice")
+    .row()
+    .text("🎯 Dart Throw", "game_type_dart");
 
-  await ctx.reply("🎮 <b>Select a Game | بازی مورد نظر را انتخاب کنید</b>\n\n⚠️ Note: This is fake money for fun!", { 
-    parse_mode: "HTML",     reply_markup: kb 
+  await ctx.reply("🎮 <b>Select Game Type | نوع بازی را انتخاب کنید</b>\n\nChoose a game to start betting:", { 
+    parse_mode: "HTML", 
+    reply_markup: kb 
   });
 }
 
 bot.command("game", async (ctx) => await showGameMenu(ctx));
 bot.command("بازی", async (ctx) => await showGameMenu(ctx));
 
-bot.callbackQuery("game_menu_dice", async (ctx) => {
-  if (!(await areGamesEnabled())) return ctx.answerCallbackQuery({ text: "Games disabled." });
-  await ctx.editMessageText("🎲 <b>Chance Games</b>\n\nTo play, reply to this message with:\n<code>bet 1000 football</code>\n\nSupported: dice, football, basketball, dart, bowling", { parse_mode: "HTML" });
+// ذخیره موقت نوع بازی انتخاب شده توسط کاربر
+const userGameSelection = new Map(); // userId -> gameType
+
+bot.callbackQuery(/^game_type_(.+)$/, async (ctx) => {
+  const gameType = ctx.match[1]; // football, dice, dart
+  userGameSelection.set(ctx.from.id, gameType);
+  
+  let instruction = "";
+  if (gameType === 'football') instruction = "Send amount to play Football (e.g., 1000)";
+  if (gameType === 'dice') instruction = "Send amount to roll Dice (e.g., 1000)";
+  if (gameType === 'dart') instruction = "Send amount to throw Darts (e.g., 1000)";
+
+  await ctx.editMessageText(`⚙️ <b>Configuring ${gameType.toUpperCase()}</b>\n\n${instruction}\n\nOr reply to a user with amount to challenge them!`, { parse_mode: "HTML" });
 });
 
-bot.callbackQuery("game_menu_mines", async (ctx) => {
-  if (!(await areGamesEnabled())) return ctx.answerCallbackQuery({ text: "Games disabled." });
-  await ctx.editMessageText("💣 <b>Mines Game | بازی مین</b>\n\nTo start, reply to this message with:\n<code>mines 1000 3</code>\n(Amount, Number of Mines 1-5)", { parse_mode: "HTML" });
-});
+// هندلر اصلی شروع بازی (تک نفره یا دو نفره)
+bot.on("message:text", async (ctx) => {
+  const text = ctx.message.text.trim();
+  const userId = ctx.from.id;
+  const selectedGame = userGameSelection.get(userId);
 
-const GAME_TYPES = {
-  "dice": { fa: "تاس", winChance: 0.5, multiplier: 3 },
-  "football": { fa: "فوتبال", winChance: 0.5, multiplier: 2 },
-  "basketball": { fa: "بسکتبال", winChance: 0.4, multiplier: 2.5 },
-  "dart": { fa: "دارت", winChance: 0.3, multiplier: 3.3 },
-  "bowling": { fa: "بولینگ", winChance: 0.2, multiplier: 5 },
-  "تاس": "dice", "فوتبال": "football", "بسکتبال": "basketball", "دارت": "dart", "بولینگ": "bowling"
-};
+  // اگر کاربر بازی‌ای انتخاب کرده و مبلغ فرستاده
+  if (selectedGame && /^\d+$/.test(text)) {
+    const amount = parseInt(text, 10);    if (amount < 100) return ctx.reply("❗️ Minimum bet is 100.");
+    
+    const user = await getUser(userId);
+    if (!user || user.balance < amount) return ctx.reply("❗️ Insufficient balance.");
+
+    // کسر مبلغ
+    await supabase.from("users").update({ balance: user.balance - amount }).eq("user_id", userId);
+
+    // تعیین نوع ایموجی
+    let emoji = "🎲";
+    if (selectedGame === 'football') emoji = "⚽";
+    if (selectedGame === 'dart') emoji = "🎯";
+
+    // ارسال انیمیشن تلگرام
+    const diceResult = await ctx.api.sendDice(ctx.chat.id, { emoji: emoji === '⚽' ? 'football' : (emoji === '🎯' ? 'dart' : 'dice') });
+    const value = diceResult.dice.value; // عدد بین 1 تا 6
+
+    // محاسبه نتیجه (ساده: اگر عدد > 3 برنده، ضریب 2)
+    const isWin = value > 3;
+    const winAmount = isWin ? amount * 2 : 0;
+
+    if (isWin) {
+      await supabase.from("users").update({ balance: user.balance - amount + winAmount }).eq("user_id", userId);
+    }
+
+    let resultText = isWin 
+      ? `🎉 <b>YOU WON!</b>\nValue: ${value}/6\nPrize: <b>${fmt(winAmount)}</b>`
+      : `❌ <b>YOU LOST!</b>\nValue: ${value}/6\nLost: <b>${fmt(amount)}</b>`;
+
+    await ctx.reply(`${emoji} ${resultText}`, { parse_mode: "HTML" });
+    
+    // پاک کردن انتخاب بعد از بازی
+    userGameSelection.delete(userId);
+    return;
+  }
+
+  // حالت دو نفره (ریپلای روی کاربر)
+  if (ctx.message.reply_to_message && selectedGame && /^\d+$/.test(text)) {
+    const opponent = ctx.message.reply_to_message.from;
+    if (opponent.is_bot) return ctx.reply("❗️ Cannot play against bots.");
+    
+    const amount = parseInt(text, 10);
+    const user = await getUser(userId);
+    const opponentUser = await getUser(opponent.id);
+
+    if (!user || user.balance < amount) return ctx.reply("❗️ You have insufficient balance.");
+    if (!opponentUser || opponentUser.balance < amount) return ctx.reply("❗️ Opponent has insufficient balance.");
+
+    // کسر مبلغ از هر دو
+    await supabase.from("users").update({ balance: user.balance - amount }).eq("user_id", userId);    await supabase.from("users").update({ balance: opponentUser.balance - amount }).eq("user_id", opponent.id);
+
+    let emoji = "🎲";
+    if (selectedGame === 'football') emoji = "⚽";
+    if (selectedGame === 'dart') emoji = "🎯";
+
+    // تاس ریختن برای هر دو نفر
+    const myRoll = await ctx.api.sendDice(ctx.chat.id, { emoji: emoji === '⚽' ? 'football' : (emoji === '🎯' ? 'dart' : 'dice') });
+    const oppRoll = await ctx.api.sendDice(ctx.chat.id, { emoji: emoji === '⚽' ? 'football' : (emoji === '🎯' ? 'dart' : 'dice') });
+
+    const myVal = myRoll.dice.value;
+    const oppVal = oppRoll.dice.value;
+
+    let winnerId = null;
+    let prize = amount * 2; // کل پول جمع شده
+
+    if (myVal > oppVal) winnerId = userId;
+    else if (oppVal > myVal) winnerId = opponent.id;
+    else {
+      // مساوی: پول برگردد
+      await supabase.from("users").update({ balance: user.balance + amount }).eq("user_id", userId);
+      await supabase.from("users").update({ balance: opponentUser.balance + amount }).eq("user_id", opponent.id);
+      return ctx.reply(`🤝 <b>DRAW!</b>\nYou: ${myVal} | Opponent: ${oppVal}\nBets returned.`);
+    }
+
+    // پرداخت به برنده
+    const winner = await getUser(winnerId);
+    await supabase.from("users").update({ balance: winner.balance + prize }).eq("user_id", winnerId);
+
+    const winnerName = winnerId === userId ? "You" : (opponent.username || opponent.first_name);
+    
+    await ctx.reply(
+      `🏆 <b>DUEL RESULT</b>\n\n` +
+      `👤 You: ${myVal}\n` +
+      `👤 Opponent: ${oppVal}\n\n` +
+      `🎉 Winner: <b>${winnerName}</b>\n💰 Prize: <b>${fmt(prize)}</b>`,
+      { parse_mode: "HTML" }
+    );
+    
+    userGameSelection.delete(userId);
+    return;
+  }
+});
 
 // ==========================================================================
 // 9) هندلر اصلی متن‌ها

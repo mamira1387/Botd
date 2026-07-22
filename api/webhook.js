@@ -612,12 +612,13 @@ async function startMultiplayerGame(ctx, lobby) {  const { gameType, bet, player
   await ctx.reply(resText, { parse_mode: "HTML" });
 }
 
-// ==========================================================================
-// 9) هندلر اصلی متن‌ها (انتقال، ولت، آمار و ...)
+ 
+    // ==========================================================================
+// 9) هندلر اصلی متن‌ها (انتقال اصلاح شده + سایر دستورات)
 // ==========================================================================
 
 const KW = {
-  transfer: ["انتقال", "transfer"],
+  transfer: ["انتقال", "transfer", "send"],
   to: ["به", "to"],
   createBill: ["ساخت\\s*قبض", "create\\s*bill", "make\\s*bill"],
   uses: ["بار\\s*مصرف", "uses", "times"],
@@ -631,12 +632,12 @@ const KW = {
 function kw(key) { return KW[key].join("|"); }
 const ID_TOKEN = `\\d+|@[A-Za-z0-9_]{3,32}`;
 
+// الگوهای جدید برای تشخیص دقیق‌تر
 const RE_TRANSFER_TO_ID = new RegExp(`^(?:${kw("transfer")})\\s+(${AMOUNT_TOKEN})\\s+(?:${kw("to")})?\\s+(${ID_TOKEN})$`, "i");
-const RE_TRANSFER_REPLY = new RegExp(`^(?:${kw("transfer")})?\\s*(${AMOUNT_TOKEN})$`, "i");
+const RE_ADMIN_ADD = new RegExp(`^(?:${kw("charge")})\\s+(${AMOUNT_TOKEN})(?:\\s+(?:${kw("to")}|for)\\s+(${ID_TOKEN}))?$`, "i");
+const RE_ADMIN_SUB = new RegExp(`^(?:${kw("deduct")})\\s+(${AMOUNT_TOKEN})(?:\\s+(?:${kw("from")})\\s+(${ID_TOKEN}))?$`, "i");
 const RE_CREATE_BILL = new RegExp(`^(?:${kw("createBill")})\\s+(${AMOUNT_TOKEN})\\s+(?:دپث\\s+)?([\\d۰-۹]+)\\s*(?:${kw("uses")})$`, "i");
 const RE_CREATE_BILL_UNLIMITED = new RegExp(`^(?:${kw("createBill")})\\s+(${AMOUNT_TOKEN})\\s+(?:${kw("unlimited")})$`, "i");
-const RE_ADMIN_ADD = new RegExp(`^(?:${kw("charge")})\\s+(${AMOUNT_TOKEN})(?:\\s+(?:${kw("to")}|for)\\s+(${ID_TOKEN}))?$`, "i");const RE_ADMIN_SUB = new RegExp(`^(?:${kw("deduct")})\\s+(${AMOUNT_TOKEN})(?:\\s+(?:${kw("from")})\\s+(${ID_TOKEN}))?$`, "i");
-const RE_JUST_NUMBER = new RegExp(`^${AMOUNT_TOKEN}$`, "i");
 const RE_WALLET_KEYWORD = new RegExp(`^(?:${kw("wallet")})$`, "i");
 const RE_STATS_KEYWORD = /^(?:آمار|stats)$/i;
 const RE_CREATE_PRIZE = /^ساخت\s+جایزه\s+([\d۰-۹.,]+\s*(?:میلیارد|میلیون|هزار|کا|ک|k|m|b|م|ب)?)$/i;
@@ -661,7 +662,6 @@ bot.on("message:text", async (ctx) => {
     await handleStats(ctx);
     return;
   }
-
   // 3. Create Prize (Admin)
   const mPrize = text.match(RE_CREATE_PRIZE);
   if (mPrize) {
@@ -684,7 +684,8 @@ bot.on("message:text", async (ctx) => {
     } else {
       const replyUser = getReplyFromUser(reply);
       if (replyUser) {
-        targetId = replyUser.id;        await ensureUser(replyUser);
+        targetId = replyUser.id;
+        await ensureUser(replyUser);
       }
     }
     if (!targetId) targetId = ctx.from.id;
@@ -700,46 +701,52 @@ bot.on("message:text", async (ctx) => {
     );
   }
 
-  // 5. Transfer via Reply
-  if (ctx.message.reply_to_message && (RE_JUST_NUMBER.test(text) || RE_TRANSFER_REPLY.test(text))) {
-    const mReply = text.match(RE_TRANSFER_REPLY);
-    const amountRaw = mReply ? mReply[1] : text;
-    const amount = parseAmount(amountRaw);
+  // 5. Transfer Logic (IMPROVED)
+  // حالت اول: ریپلای روی کاربر + نوشتن مبلغ (مثلاً 1000 یا 10k)
+  if (ctx.message.reply_to_message) {
+    const amount = parseAmount(text);
     if (amount) {
       const reply = ctx.message.reply_to_message;
       const forwardedId = getForwardedUserId(reply);
-      let toUser = getReplyFromUser(reply);
+      let toUser = null;
       
       if (forwardedId) {
-        await ensureUser({ id: forwardedId });
-        toUser = await getUser(forwardedId);
-      } else if (toUser) {
-        await ensureUser(toUser);
+        await ensureUser({ id: forwardedId });        toUser = await getUser(forwardedId);
+      } else {
+        const replyUser = getReplyFromUser(reply);
+        if (replyUser) {
+          await ensureUser(replyUser);
+          toUser = await getUser(replyUser.id);
+        }
       }
 
-      if (!toUser) return ctx.reply("❗️ Could not detect target user.");
-      await handleTransferRequest(ctx, toUser, amount);
-      return;
+      if (toUser) {
+        if (toUser.user_id === ctx.from.id) return ctx.reply("❗️ You cannot transfer to yourself.");
+        await handleTransferRequest(ctx, toUser, amount);
+        return;
+      }
     }
   }
 
-  // 6. Transfer to ID/Username
+  // حالت دوم: دستور متنی کامل (transfer 1000 to @user)
   const mTransfer = text.match(RE_TRANSFER_TO_ID);
   if (mTransfer) {
     const amount = parseAmount(mTransfer[1]);
     const toId = await resolveIdentifierToken(mTransfer[2]);
+    
     if (!amount) return ctx.reply("❗️ Invalid amount.");
     if (!toId) return ctx.reply("❗️ Invalid target user.");
     if (toId === ctx.from.id) return ctx.reply("❗️ You cannot transfer to yourself.");
     
     await ensureUser({ id: toId });
-    const toUser = await getUser(toId);    if (!toUser) return ctx.reply("❗️ Target user is not registered.");
+    const toUser = await getUser(toId);
+    if (!toUser) return ctx.reply("❗️ Target user is not registered.");
     
     await handleTransferRequest(ctx, { id: toId, username: toUser.username, first_name: toUser.first_name }, amount);
     return;
   }
 
-  // 7. Create Bill
+  // 6. Create Bill
   const mBill = text.match(RE_CREATE_BILL);
   if (mBill) {
     const amount = parseAmount(mBill[1]);
@@ -753,12 +760,11 @@ bot.on("message:text", async (ctx) => {
   const mBillUnlimited = text.match(RE_CREATE_BILL_UNLIMITED);
   if (mBillUnlimited) {
     const amount = parseAmount(mBillUnlimited[1]);
-    if (!amount) return ctx.reply("❗️ Invalid bill amount.");
-    await createBill(ctx, amount, null);
+    if (!amount) return ctx.reply("❗️ Invalid bill amount.");    await createBill(ctx, amount, null);
     return;
   }
 
-  // 8. Admin Add/Deduct
+  // 7. Admin Add/Deduct
   const mAdd = text.match(RE_ADMIN_ADD);
   if (mAdd) {
     if (!(await isAdmin(ctx.from.id))) return ctx.reply("⛔️ Only admins can add balance.");
@@ -782,7 +788,8 @@ bot.on("message:text", async (ctx) => {
     await ensureUser({ id: targetId });
     const { data: cur } = await supabase.from("users").select("balance").eq("user_id", targetId).single();
     if (!cur) return ctx.reply("❗️ User not found.");    
-    await supabase.from("users").update({ balance: cur.balance + amount }).eq("user_id", targetId);    await ctx.reply(`✅ Added <b>${fmt(amount)}</b> to <code>${targetId}</code>.`, { parse_mode: "HTML" });
+    await supabase.from("users").update({ balance: cur.balance + amount }).eq("user_id", targetId);
+    await ctx.reply(`✅ Added <b>${fmt(amount)}</b> to <code>${targetId}</code>.`, { parse_mode: "HTML" });
     return;
   }
 
@@ -803,7 +810,6 @@ bot.on("message:text", async (ctx) => {
         targetId = fwdId || repUser?.id || null;
       }
     }
-
     if (!amount) return ctx.reply("❗️ Invalid amount.");
     if (!targetId) targetId = ctx.from.id;
 
@@ -818,20 +824,21 @@ bot.on("message:text", async (ctx) => {
     });
 
     if (!ok) {
-      return ctx.reply("❌ Error processing deduction. Database transaction failed.");
+      return ctx.reply("❌ Error processing deduction.");
     }
 
     await ctx.reply(`✅ Deducted <b>${fmt(amount)}</b> from <code>${targetId}</code>.`, { parse_mode: "HTML" });
     return;
   }
 
-  // 9. Forwarded Message Detection (Admin)
+  // 8. Forwarded Message Detection (Admin)
   if (ctx.chat.type === "private" && (await isAdmin(ctx.from.id))) {
     const fwdId = getForwardedUserId(ctx.message);
     if (fwdId) {
       await ensureUser({ id: fwdId });
       const fwdUser = await getUser(fwdId);
-      return ctx.reply(        `📎 <b>Forwarded Message Detected</b>\n🆔 ID: <code>${fwdId}</code>\n` +
+      return ctx.reply(
+        `📎 <b>Forwarded Message Detected</b>\n🆔 ID: <code>${fwdId}</code>\n` +
         (fwdUser?.username ? `👤 Username: @${fwdUser.username}\n` : "") +
         `💰 Balance: <b>${fmt(fwdUser?.balance ?? 0)}</b>\n\n` +
         `Reply to this message with:\n<code>add 10k</code> or <code>deduct 10k</code>`,
@@ -840,7 +847,6 @@ bot.on("message:text", async (ctx) => {
     }
   }
 });
-
 // ==========================================================================
 // 10) Callbacks و توابع کمکی انتقال/قبض/آمار/مین
 // ==========================================================================

@@ -270,7 +270,7 @@ async function handleWalletCommand(ctx) {
 // ==========================================================================
 // 5.1) دستور /help
 // ==========================================================================
-// Replace existing /help handler with this chunked version
+// Replace existing /help handler with this corrected, chunked version
 bot.command("help", async (ctx) => {
   try {
     const adminStatus = await isAdmin(ctx.from.id).catch(() => false);
@@ -309,7 +309,7 @@ bot.command("help", async (ctx) => {
 • ایجاد قبض بدون محدودیت:
   مثال: <code>make bill 10k unlimited</code>
 • پرداخت قبض:
-  - وقتی قبض ساخته شود لینک پرداخت ظاهر می‌شود؛ روی آن کلیک کنید یا /start=bill_<id> را باز کنید.`
+  - وقتی قبض ساخته شود لینک پرداخت ظاهر می‌شود؛ روی آن کلیک کنید یا آدرس start را باز کنید، مثال: <code>/start=bill_{id}</code> (در متن help علامت <> حذف شد تا مشکل HTML پیش نیاید).`
     );
 
     sections.push(
@@ -335,7 +335,7 @@ bot.command("help", async (ctx) => {
 • مین (Mines) — بازی با گرید دکمه‌ای:
   مثال: <code>/play مین 5000</code> یا <code>بازی مین 5000</code>
   - پس از قرار دادن شرط، گرید نشان داده می‌شود؛ خانه‌ها را باز کنید، در هر باخت شرط می‌سوزد.
-  - برای برداشت: <code>/cashout_<gameId></code> (شناسهٔ بازی در پیام ربات نمایش داده می‌شود).`
+  - برای برداشت: <code>/cashout_{gameId}</code> (در متن help از {} استفاده شده تا خطای HTML پیش نیاید).`
     );
 
     sections.push(
@@ -358,9 +358,9 @@ bot.command("help", async (ctx) => {
 • ساخت کد ادمین برای کاربر:
   مثال (مالک اجرا می‌کند): <code>/makecode</code> (سپس کد ۱۰ رقمی تولید می‌شود)
 • افزودن ادمین مستقیم:
-  مثال: <code>/addadmin &lt;id|@username&gt;</code>
+  مثال: <code>/addadmin {id|@username}</code>
 • حذف ادمین:
-  مثال: <code>/deladmin &lt;id|@username&gt;</code>`
+  مثال: <code>/deladmin {id|@username}</code>`
       );
     }
 
@@ -376,15 +376,14 @@ bot.command("help", async (ctx) => {
 `<b>⚠️ نکات مهم</b>
 • تمام واحدها در «دپث» هستند و این والت کاملاً مجازی است — هیچ ارزش واقعی ندارد.
 • برای حذف یا ویرایش پیام‌هایی که ربات ایجاد کرده، ربات باید در گروه ادمین با مجوز حذف پیام باشد.
-• اگر پیام کار نمی‌کند: احتمال دارد متن خیلی طولانی باشد — این تابع متن را به بخش‌های کوچک تقسیم می‌کند.`
+• اگر پیام کار نمی‌کند: احتمال دارد متن خیلی طولانی باشد یا شامل علامت‌های <> شده باشد — این نسخه از help از {} به‌جای <> استفاده می‌کند.`
     );
 
-    // send sections in chunks (combine adjacent sections until safe limit)
-    const CHUNK_LIMIT = 3500; // safe margin under Telegram's ~4096
+    // send sections in chunks (safe under Telegram's ~4096 limit)
+    const CHUNK_LIMIT = 3500;
     let current = "";
     for (const sec of sections) {
       if ((current + "\n\n" + sec).length > CHUNK_LIMIT) {
-        // send current
         if (current.trim()) await ctx.reply(current, { parse_mode: "HTML" }).catch(e => console.error("help send error:", e));
         current = sec;
       } else {
@@ -394,7 +393,6 @@ bot.command("help", async (ctx) => {
     if (current.trim()) await ctx.reply(current, { parse_mode: "HTML" }).catch(e => console.error("help send error:", e));
   } catch (err) {
     console.error("help handler error:", err);
-    // fallback: short help
     await ctx.reply("📖 Help error — لطفا بعدا تلاش کنید یا لاگ‌ها را بررسی کنید.");
   }
 });

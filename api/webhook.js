@@ -1,5 +1,5 @@
 // ==========================================================================
-// Depth TON Bot — api/webhook.js (Final Stable Version)
+// Depth TON Bot — api/index.js (ULTIMATE FINAL VERSION)
 // ==========================================================================
 
 const { Bot, InlineKeyboard, webhookCallback } = require("grammy");
@@ -17,7 +17,7 @@ const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY);
 const bot = new Bot(BOT_TOKEN);
 
 // ==========================================================================
-// 1) توابع کمکی و تنظیمات
+// 1) توابع کمکی و تنظیمات اولیه
 // ==========================================================================
 
 function normalizeDigits(str) {
@@ -59,7 +59,7 @@ function fmt(n) { return Number(n).toLocaleString("en-US"); }
 async function areGamesEnabled() {
   try {
     const { data, error } = await supabase.from("bot_settings").select("value").eq("key", "games_enabled").maybeSingle();
-    if (error) return true; // Fail-safe: اگر جدول نبود، بازی روشن بماند
+    if (error) return true; 
     return data ? data.value : true;
   } catch (e) {
     return true;
@@ -281,9 +281,9 @@ bot.command("help", async (ctx) => {
     text += 
       `<b>🎮 Games & Betting | بازی و شرط‌بندی</b>\n` +
       `• /game یا /بازی → باز کردن منوی بازی‌ها\n` +
-      `• bet 1000 football → شرط‌بندی روی فوتبال (مبلغ و نوع بازی)\n` +
-      `• mines 1000 3 → شروع بازی مین‌روب (مبلغ و تعداد مین)\n` +
-      `• انواع بازی: dice, football, basketball, dart, bowling\n\n`;
+      `• bet 1000 football → شرط‌بندی سریع (تاس، فوتبال، دارت، بولینگ، بسکتبال، اسلات)\n` +
+      `• mines 1000 3 → شروع بازی مین‌روب\n` +
+      `• حالت چندنفره: از منوی بازی حالت Multiplayer را انتخاب کنید\n\n`;
   }
 
   if (adminStatus) {
@@ -375,24 +375,33 @@ setInterval(async () => {
 }, 60 * 1000);
 
 // ==========================================================================
+// 8) سیستم بازی‌های پیشرفته (Lobby, Multiplayer, All Games)
 // ==========================================================================
-// 8) سیستم بازی‌های جدید (با انیمیشن واقعی تلگرام)
-// ==========================================================================
+
+// نگه‌داشتن وضعیت موقت کاربر برای فرآیند انتخاب بازی
+if (!global.userSelections) global.userSelections = new Map();
+// نگه‌داشتن لابی‌های فعال
+if (!global.activeLobbies) global.activeLobbies = new Map();
 
 async function showGameMenu(ctx) {
   const isOn = await areGamesEnabled();
-  if (!isOn) {
-    return ctx.reply("🚫 Games are currently disabled by admin.");
-  }
+  if (!isOn) return ctx.reply("🚫 Games are currently disabled by admin.");
   
   const kb = new InlineKeyboard()
-    .text("⚽ Football Duel", "game_type_football")
+    .text("⚽ Football", "sel_game_football")
     .row()
-    .text("🎲 Dice Roll", "game_type_dice")
+    .text("🎲 Dice", "sel_game_dice")    .row()
+    .text("🎯 Dart", "sel_game_dart")
     .row()
-    .text("🎯 Dart Throw", "game_type_dart");
+    .text("🎳 Bowling", "sel_game_bowling")
+    .row()
+    .text("🏀 Basketball", "sel_game_basketball")
+    .row()
+    .text("🎰 Slots", "sel_game_slots")
+    .row()
+    .text("💣 Mines", "sel_game_mines");
 
-  await ctx.reply("🎮 <b>Select Game Type | نوع بازی را انتخاب کنید</b>\n\nChoose a game to start betting:", { 
+  await ctx.reply("🎮 <b>Select Game Type | نوع بازی را انتخاب کنید</b>", { 
     parse_mode: "HTML", 
     reply_markup: kb 
   });
@@ -401,124 +410,210 @@ async function showGameMenu(ctx) {
 bot.command("game", async (ctx) => await showGameMenu(ctx));
 bot.command("بازی", async (ctx) => await showGameMenu(ctx));
 
-// ذخیره موقت نوع بازی انتخاب شده توسط کاربر
-const userGameSelection = new Map(); // userId -> gameType
+// مرحله 1: انتخاب نوع بازی
+bot.callbackQuery(/^sel_game_(.+)$/, async (ctx) => {
+  const gameType = ctx.match[1];
+  global.userSelections.set(ctx.from.id, { type: gameType, step: 'mode_select' });
 
-bot.callbackQuery(/^game_type_(.+)$/, async (ctx) => {
-  const gameType = ctx.match[1]; // football, dice, dart
-  userGameSelection.set(ctx.from.id, gameType);
+  let msg = `⚙️ <b>${gameType.toUpperCase()} Selected</b>\n\nSelect Mode:`;
+  if (gameType === 'mines') {
+    msg = "💣 <b>Mines Selected</b>\n\nSend: <code>mines AMOUNT MINES_COUNT</code>";
+  }
   
-  let instruction = "";
-  if (gameType === 'football') instruction = "Send amount to play Football (e.g., 1000)";
-  if (gameType === 'dice') instruction = "Send amount to roll Dice (e.g., 1000)";
-  if (gameType === 'dart') instruction = "Send amount to throw Darts (e.g., 1000)";
-
-  await ctx.editMessageText(`⚙️ <b>Configuring ${gameType.toUpperCase()}</b>\n\n${instruction}\n\nOr reply to a user with amount to challenge them!`, { parse_mode: "HTML" });
+  const kb = new InlineKeyboard();
+  if (gameType !== 'mines') {
+    kb.text("👤 Solo", "mode_solo")
+      .row()
+      .text("👥 Multiplayer", "mode_multi");
+  }
+  
+  await ctx.editMessageText(msg, { parse_mode: "HTML", reply_markup: kb });
 });
 
-// هندلر اصلی شروع بازی (تک نفره یا دو نفره)
+// مرحله 2: انتخاب حالت
+bot.callbackQuery(/^mode_(.+)$/, async (ctx) => {
+  const mode = ctx.match[1];
+  const userId = ctx.from.id;
+  const selection = global.userSelections.get(userId);
+  if (!selection) return ctx.answerCallbackQuery({ text: "Session expired." });
+
+  if (mode === 'solo') {
+    selection.step = 'awaiting_bet_solo';
+    global.userSelections.set(userId, selection);    await ctx.editMessageText(`💰 Send the bet amount to start ${selection.type} solo!`);
+  } else if (mode === 'multi') {
+    selection.step = 'awaiting_bet_multi';
+    global.userSelections.set(userId, selection);
+    await ctx.editMessageText(`👥 <b>Multiplayer Setup</b>\n\nSend the bet amount per player.`);
+  }
+});
+
+// مرحله 3: پردازش مبلغ و شروع بازی
 bot.on("message:text", async (ctx) => {
   const text = ctx.message.text.trim();
   const userId = ctx.from.id;
-  const selectedGame = userGameSelection.get(userId);
+  const selection = global.userSelections.get(userId);
 
-  // اگر کاربر بازی‌ای انتخاب کرده و مبلغ فرستاده
-  if (selectedGame && /^\d+$/.test(text)) {
-    const amount = parseInt(text, 10);    if (amount < 100) return ctx.reply("❗️ Minimum bet is 100.");
-    
+  // --- مدیریت بازی مین ---
+  const minesMatch = text.match(/^(?:mines|مین)\s+(\d+)\s+(\d)$/i);
+  if (minesMatch) {
+     if (!(await areGamesEnabled())) return ctx.reply("🚫 Games disabled.");
+     const amount = parseInt(minesMatch[1], 10);
+     const minesCount = parseInt(minesMatch[2], 10);
+     if (amount < 100) return ctx.reply("❗️ Min bet 100.");
+     if (minesCount < 1 || minesCount > 5) return ctx.reply("❗️ Mines 1-5.");
+
+     const user = await getUser(userId);
+     if (!user || user.balance < amount) return ctx.reply("❗️ Insufficient balance.");
+     await supabase.from("users").update({ balance: user.balance - amount }).eq("user_id", userId);
+
+     let grid = Array(25).fill(0);
+     let placed = 0;
+     while (placed < minesCount) {
+       const idx = Math.floor(Math.random() * 25);
+       if (grid[idx] === 0) { grid[idx] = 1; placed++; }
+     }
+
+     const { data: game, error } = await supabase.from("active_games").insert({
+       user_id: userId, chat_id: ctx.chat.id, message_id: 0, game_type: 'mines',
+       bet_amount: amount, grid_state: grid, mines_count: minesCount, is_active: true
+     }).select().single();
+
+     if (error) return ctx.reply("❌ Error starting game.");
+
+     const kb = new InlineKeyboard();
+     for (let i = 0; i < 25; i++) {
+       kb.text("⬜", `mines_click_${game.id}_${i}`);
+       if ((i + 1) % 5 === 0) kb.row();
+     }
+     kb.row().text("💰 Cashout", `mines_cashout_${game.id}`);
+
+     const sent = await ctx.reply(`💣 <b>Mines Started</b>\nBet: ${fmt(amount)} | Mines: ${minesCount}`, { parse_mode: "HTML", reply_markup: kb });
+     await supabase.from("active_games").update({ message_id: sent.message_id }).eq("id", game.id);     global.userSelections.delete(userId);
+     return;
+  }
+
+  // --- مدیریت سایر بازی‌ها ---
+  if (selection && /^\d+$/.test(text)) {
+    const amount = parseInt(text, 10);
+    if (amount < 100) return ctx.reply("❗️ Min bet 100.");
     const user = await getUser(userId);
     if (!user || user.balance < amount) return ctx.reply("❗️ Insufficient balance.");
 
-    // کسر مبلغ
-    await supabase.from("users").update({ balance: user.balance - amount }).eq("user_id", userId);
-
-    // تعیین نوع ایموجی
-    let emoji = "🎲";
-    if (selectedGame === 'football') emoji = "⚽";
-    if (selectedGame === 'dart') emoji = "🎯";
-
-    // ارسال انیمیشن تلگرام
-    const diceResult = await ctx.api.sendDice(ctx.chat.id, { emoji: emoji === '⚽' ? 'football' : (emoji === '🎯' ? 'dart' : 'dice') });
-    const value = diceResult.dice.value; // عدد بین 1 تا 6
-
-    // محاسبه نتیجه (ساده: اگر عدد > 3 برنده، ضریب 2)
-    const isWin = value > 3;
-    const winAmount = isWin ? amount * 2 : 0;
-
-    if (isWin) {
-      await supabase.from("users").update({ balance: user.balance - amount + winAmount }).eq("user_id", userId);
+    // حالت تک نفره
+    if (selection.step === 'awaiting_bet_solo') {
+      await supabase.from("users").update({ balance: user.balance - amount }).eq("user_id", userId);
+      await runSoloGame(ctx, selection.type, amount, userId);
+      global.userSelections.delete(userId);
+      return;
     }
 
-    let resultText = isWin 
-      ? `🎉 <b>YOU WON!</b>\nValue: ${value}/6\nPrize: <b>${fmt(winAmount)}</b>`
-      : `❌ <b>YOU LOST!</b>\nValue: ${value}/6\nLost: <b>${fmt(amount)}</b>`;
+    // حالت چندنفره (ساخت لابی)
+    if (selection.step === 'awaiting_bet_multi') {
+      await supabase.from("users").update({ balance: user.balance - amount }).eq("user_id", userId);
+      
+      const lobbyId = Math.floor(Math.random() * 1000000).toString();
+      global.activeLobbies.set(lobbyId, {
+        id: lobbyId,
+        gameType: selection.type,
+        bet: amount,
+        maxPlayers: 2,
+        players: [{ id: userId, name: ctx.from.username || ctx.from.first_name }],
+        chatId: ctx.chat.id,
+        status: 'waiting'
+      });
 
-    await ctx.reply(`${emoji} ${resultText}`, { parse_mode: "HTML" });
-    
-    // پاک کردن انتخاب بعد از بازی
-    userGameSelection.delete(userId);
-    return;
-  }
-
-  // حالت دو نفره (ریپلای روی کاربر)
-  if (ctx.message.reply_to_message && selectedGame && /^\d+$/.test(text)) {
-    const opponent = ctx.message.reply_to_message.from;
-    if (opponent.is_bot) return ctx.reply("❗️ Cannot play against bots.");
-    
-    const amount = parseInt(text, 10);
-    const user = await getUser(userId);
-    const opponentUser = await getUser(opponent.id);
-
-    if (!user || user.balance < amount) return ctx.reply("❗️ You have insufficient balance.");
-    if (!opponentUser || opponentUser.balance < amount) return ctx.reply("❗️ Opponent has insufficient balance.");
-
-    // کسر مبلغ از هر دو
-    await supabase.from("users").update({ balance: user.balance - amount }).eq("user_id", userId);    await supabase.from("users").update({ balance: opponentUser.balance - amount }).eq("user_id", opponent.id);
-
-    let emoji = "🎲";
-    if (selectedGame === 'football') emoji = "⚽";
-    if (selectedGame === 'dart') emoji = "🎯";
-
-    // تاس ریختن برای هر دو نفر
-    const myRoll = await ctx.api.sendDice(ctx.chat.id, { emoji: emoji === '⚽' ? 'football' : (emoji === '🎯' ? 'dart' : 'dice') });
-    const oppRoll = await ctx.api.sendDice(ctx.chat.id, { emoji: emoji === '⚽' ? 'football' : (emoji === '🎯' ? 'dart' : 'dice') });
-
-    const myVal = myRoll.dice.value;
-    const oppVal = oppRoll.dice.value;
-
-    let winnerId = null;
-    let prize = amount * 2; // کل پول جمع شده
-
-    if (myVal > oppVal) winnerId = userId;
-    else if (oppVal > myVal) winnerId = opponent.id;
-    else {
-      // مساوی: پول برگردد
-      await supabase.from("users").update({ balance: user.balance + amount }).eq("user_id", userId);
-      await supabase.from("users").update({ balance: opponentUser.balance + amount }).eq("user_id", opponent.id);
-      return ctx.reply(`🤝 <b>DRAW!</b>\nYou: ${myVal} | Opponent: ${oppVal}\nBets returned.`);
+      const kb = new InlineKeyboard().text("🎮 Join Game", `join_lobby_${lobbyId}`);
+      const sent = await ctx.reply(
+        `🏆 <b>LOBBY CREATED</b>\n\n🎮 Game: ${selection.type}\n💰 Bet: ${fmt(amount)}\n👥 Players: 1/2`,
+        { parse_mode: "HTML", reply_markup: kb }
+      );
+      global.activeLobbies.get(lobbyId).messageId = sent.message_id;
+      global.userSelections.delete(userId);
+      return;
     }
-
-    // پرداخت به برنده
-    const winner = await getUser(winnerId);
-    await supabase.from("users").update({ balance: winner.balance + prize }).eq("user_id", winnerId);
-
-    const winnerName = winnerId === userId ? "You" : (opponent.username || opponent.first_name);
-    
-    await ctx.reply(
-      `🏆 <b>DUEL RESULT</b>\n\n` +
-      `👤 You: ${myVal}\n` +
-      `👤 Opponent: ${oppVal}\n\n` +
-      `🎉 Winner: <b>${winnerName}</b>\n💰 Prize: <b>${fmt(prize)}</b>`,
-      { parse_mode: "HTML" }
-    );
-    
-    userGameSelection.delete(userId);
-    return;
   }
 });
 
+// پیوستن به لابی
+bot.callbackQuery(/^join_lobby_(.+)$/, async (ctx) => {
+  const lobbyId = ctx.match[1];
+  const lobby = global.activeLobbies.get(lobbyId);  if (!lobby) return ctx.answerCallbackQuery({ text: "Lobby expired." });
+  if (lobby.players.find(p => p.id === ctx.from.id)) return ctx.answerCallbackQuery({ text: "Already joined!" });
+  
+  const user = await getUser(ctx.from.id);
+  if (!user || user.balance < lobby.bet) return ctx.answerCallbackQuery({ text: "Insufficient balance!" });
+
+  await supabase.from("users").update({ balance: user.balance - lobby.bet }).eq("user_id", ctx.from.id);
+  lobby.players.push({ id: ctx.from.id, name: ctx.from.username || ctx.from.first_name });
+
+  if (lobby.players.length >= lobby.maxPlayers) {
+    await startMultiplayerGame(ctx, lobby);
+    global.activeLobbies.delete(lobbyId);
+  } else {
+    await ctx.editMessageText(
+      `🏆 <b>LOBBY UPDATED</b>\n\n🎮 Game: ${lobby.gameType}\n💰 Bet: ${fmt(lobby.bet)}\n👥 Players: ${lobby.players.length}/${lobby.maxPlayers}`,
+      { parse_mode: "HTML", reply_markup: new InlineKeyboard().text("🎮 Join Game", `join_lobby_${lobbyId}`) }
+    );
+  }
+  await ctx.answerCallbackQuery();
+});
+
+// اجرای بازی تک نفره
+async function runSoloGame(ctx, gameType, amount, userId) {
+  const gameConfig = {
+    'dice': { emoji: 'dice', winVal: 3, mult: 2 },
+    'football': { emoji: 'football', winVal: 3, mult: 2 },
+    'dart': { emoji: 'dart', winVal: 4, mult: 3 },
+    'bowling': { emoji: 'bowling', winVal: 4, mult: 3 },
+    'basketball': { emoji: 'basketball', winVal: 4, mult: 2.5 },
+    'slots': { emoji: 'slotmachine', winVal: 50, mult: 5 } // اسلات عدد 1-64 دارد
+  };
+  
+  const config = gameConfig[gameType] || gameConfig['dice'];
+  const roll = await ctx.api.sendDice(ctx.chat.id, { emoji: config.emoji });
+  const value = roll.dice.value;
+
+  const isWin = gameType === 'slots' ? value > config.winVal : value > config.winVal;
+  
+  if (isWin) {
+    const winAmount = Math.floor(amount * config.mult);
+    const curUser = await getUser(userId);
+    await supabase.from("users").update({ balance: curUser.balance - amount + winAmount }).eq("user_id", userId);
+    await ctx.reply(`🎉 <b>WIN!</b>\nValue: ${value}\nPrize: ${fmt(winAmount)}`, { parse_mode: "HTML" });
+  } else {
+    await ctx.reply(`❌ <b>LOSS!</b>\nValue: ${value}\nLost: ${fmt(amount)}`, { parse_mode: "HTML" });
+  }
+}
+
+// اجرای بازی چندنفره
+async function startMultiplayerGame(ctx, lobby) {  const { gameType, bet, players, chatId } = lobby;
+  const emojiMap = {
+    'dice': 'dice', 'football': 'football', 'dart': 'dart',
+    'bowling': 'bowling', 'basketball': 'basketball', 'slots': 'slotmachine'
+  };
+  const emoji = emojiMap[gameType] || 'dice';
+  
+  let results = [];
+  for (const player of players) {
+    const roll = await ctx.api.sendDice(chatId, { emoji: emoji });
+    results.push({ id: player.id, name: player.name, value: roll.dice.value });
+  }
+
+  results.sort((a, b) => b.value - a.value);
+  const winner = results[0];
+  const totalPot = bet * players.length;
+
+  const winnerUser = await getUser(winner.id);
+  await supabase.from("users").update({ balance: winnerUser.balance + totalPot }).eq("user_id", winner.id);
+
+  let resText = `🏁 <b>RESULT</b>\n\n`;
+  results.forEach(r => resText += `${r.name}: ${r.value} ${r.id === winner.id ? '👑' : ''}\n`);
+  resText += `\n🎉 Winner: <b>${winner.name}</b>\n💰 Prize: <b>${fmt(totalPot)}</b>`;
+  await ctx.reply(resText, { parse_mode: "HTML" });
+}
+
 // ==========================================================================
-// 9) هندلر اصلی متن‌ها
+// 9) هندلر اصلی متن‌ها (انتقال، ولت، آمار و ...)
 // ==========================================================================
 
 const KW = {
@@ -744,181 +839,65 @@ bot.on("message:text", async (ctx) => {
       );
     }
   }
-
-  // 10. Games: Bet
-  const betMatch = text.match(new RegExp(`^(?:bet|شرط)\\s+(${AMOUNT_TOKEN})\\s+(dice|football|basketball|dart|bowling|تاس|فوتبال|بسکتبال|دارت|بولینگ)$`, "i"));
-  if (betMatch) {
-    if (!(await areGamesEnabled())) return ctx.reply("🚫 Games are disabled.");
-    
-    const amount = parseAmount(betMatch[1]);
-    let gameKey = betMatch[2].toLowerCase();
-    
-    if (GAME_TYPES[gameKey] && typeof GAME_TYPES[gameKey] === 'string') {
-        gameKey = GAME_TYPES[gameKey];
-    }
-    
-    const gameInfo = GAME_TYPES[gameKey];
-    if (!gameInfo || typeof gameInfo !== 'object') return ctx.reply("❗️ Invalid game type.");
-
-    if (!amount) return ctx.reply("❗️ Invalid amount.");
-    
-    const user = await getUser(ctx.from.id);
-    if (!user || user.balance < amount) return ctx.reply("❗️ Insufficient balance.");
-
-    await supabase.from("users").update({ balance: user.balance - amount }).eq("user_id", ctx.from.id);
-
-    const isWin = Math.random() < gameInfo.winChance;
-    let winAmount = 0;
-    let resultText = "";
-
-    if (isWin) {
-      winAmount = Math.floor(amount * gameInfo.multiplier);
-      await supabase.from("users").update({ balance: user.balance - amount + winAmount }).eq("user_id", ctx.from.id);
-      resultText = `🎉 <b>YOU WON!</b>\n💰 Prize: <b>${fmt(winAmount)}</b>`;
-    } else {
-      resultText = `❌ <b>YOU LOST!</b>\n💸 Lost: <b>${fmt(amount)}</b>`;
-    }
-
-    let emoji = "🎲";
-    if (gameKey === 'football') emoji = "⚽";
-    if (gameKey === 'basketball') emoji = "🏀";
-    if (gameKey === 'dart') emoji = "🎯";
-    if (gameKey === 'bowling') emoji = "🎳";
-
-    return ctx.reply(`${emoji} ${resultText}\n\nGame: ${gameInfo.fa}\nBet: ${fmt(amount)}`, { parse_mode: "HTML" });  }
-
-  // 11. Games: Mines Start
-  const minesMatch = text.match(new RegExp(`^(?:mines|مین)\\s+(${AMOUNT_TOKEN})\\s+(\\d)$`, "i"));
-  if (minesMatch) {
-    if (!(await areGamesEnabled())) return ctx.reply("🚫 Games are disabled.");
-    
-    const amount = parseAmount(minesMatch[1]);
-    const minesCount = parseInt(minesMatch[2], 10);
-
-    if (!amount || amount < 100) return ctx.reply("❗️ Minimum bet is 100.");
-    if (minesCount < 1 || minesCount > 5) return ctx.reply("❗️ Mines count must be between 1 and 5.");
-
-    const user = await getUser(ctx.from.id);
-    if (!user || user.balance < amount) return ctx.reply("❗️ Insufficient balance.");
-
-    await supabase.from("users").update({ balance: user.balance - amount }).eq("user_id", ctx.from.id);
-
-    let grid = Array(25).fill(0);
-    let minesPlaced = 0;
-    while (minesPlaced < minesCount) {
-      const idx = Math.floor(Math.random() * 25);
-      if (grid[idx] === 0) {
-        grid[idx] = 1;
-        minesPlaced++;
-      }
-    }
-
-    const { data: game, error } = await supabase.from("active_games").insert({
-      user_id: ctx.from.id,
-      chat_id: ctx.chat.id,
-      message_id: 0,
-      game_type: 'mines',
-      bet_amount: amount,
-      grid_state: grid,
-      mines_count: minesCount,
-      is_active: true
-    }).select().single();
-
-    if (error) return ctx.reply("❌ Error starting game.");
-
-    const kb = new InlineKeyboard();
-    for (let i = 0; i < 25; i++) {
-      kb.text("⬜", `mines_click_${game.id}_${i}`);
-      if ((i + 1) % 5 === 0) kb.row();
-    }
-    kb.row().text("💰 Cashout | دریافت سود", `mines_cashout_${game.id}`);
-
-    const sent = await ctx.reply(`💣 <b>Mines Game Started</b>\n💰 Bet: <b>${fmt(amount)}</b>\n💣 Mines: <b>${minesCount}</b>\n\nClick tiles to reveal. Avoid mines!`, { parse_mode: "HTML", reply_markup: kb });
-        await supabase.from("active_games").update({ message_id: sent.message_id }).eq("id", game.id);
-  }
 });
 
 // ==========================================================================
-// 10) Callbacks و توابع کمکی انتقال/قبض/آمار
+// 10) Callbacks و توابع کمکی انتقال/قبض/آمار/مین
 // ==========================================================================
 
 bot.callbackQuery(/^mines_click_(\d+)_(\d+)$/, async (ctx) => {
   const gameId = parseInt(ctx.match[1], 10);
   const tileIndex = parseInt(ctx.match[2], 10);
-
   const { data: game } = await supabase.from("active_games").select("*").eq("id", gameId).maybeSingle();
-  if (!game || !game.is_active) return ctx.answerCallbackQuery({ text: "Game expired or inactive.", show_alert: true });
-  if (game.user_id !== ctx.from.id) return ctx.answerCallbackQuery({ text: "This is not your game!", show_alert: true });
+  
+  if (!game || !game.is_active || game.user_id !== ctx.from.id) return ctx.answerCallbackQuery({ text: "Invalid move", show_alert: true });
 
   const grid = game.grid_state;
-  
   if (grid[tileIndex] === 1) {
     await supabase.from("active_games").update({ is_active: false }).eq("id", gameId);
-    
     const finalKb = new InlineKeyboard();
     for (let i = 0; i < 25; i++) {
       let label = "⬜";
       if (grid[i] === 1) label = "💣";
       if (i === tileIndex) label = "💥";
-      finalKb.text(label, `mines_end_${i}`);
+      finalKb.text(label, `end_${i}`);
       if ((i + 1) % 5 === 0) finalKb.row();
     }
-
-    await ctx.editMessageText(`💥 <b>BOOM! You Hit a Mine!</b>\n❌ You lost <b>${fmt(game.bet_amount)}</b>.`, { parse_mode: "HTML", reply_markup: finalKb });
-    await ctx.answerCallbackQuery({ text: "Boom! Game Over.", show_alert: true });
-
+    await ctx.editMessageText(`💥 BOOM! You lost ${fmt(game.bet_amount)}.`, { parse_mode: "HTML", reply_markup: finalKb });
   } else {
     const newGrid = [...grid];
-    newGrid[tileIndex] = 2; 
-    
+    newGrid[tileIndex] = 2;
     await supabase.from("active_games").update({ grid_state: newGrid }).eq("id", gameId);
-
+    
     const kb = new InlineKeyboard();
     for (let i = 0; i < 25; i++) {
       let label = "⬜";
       if (newGrid[i] === 1) label = "💣";
       if (newGrid[i] === 2) label = "✅";
-      
       kb.text(label, `mines_click_${gameId}_${i}`);
       if ((i + 1) % 5 === 0) kb.row();
     }
-    kb.row().text("💰 Cashout | دریافت سود", `mines_cashout_${gameId}`);
+    kb.row().text("💰 Cashout", `mines_cashout_${gameId}`);
     await ctx.editMessageReplyMarkup({ reply_markup: kb });
-    await ctx.answerCallbackQuery();
   }
 });
-
 bot.callbackQuery(/^mines_cashout_(\d+)$/, async (ctx) => {
   const gameId = parseInt(ctx.match[1], 10);
   const { data: game } = await supabase.from("active_games").select("*").eq("id", gameId).maybeSingle();
-  
-  if (!game || !game.is_active) return ctx.answerCallbackQuery({ text: "Game already finished.", show_alert: true });
-  if (game.user_id !== ctx.from.id) return ctx.answerCallbackQuery({ text: "Not your game!", show_alert: true });
+  if (!game || !game.is_active || game.user_id !== ctx.from.id) return ctx.answerCallbackQuery({ text: "Invalid", show_alert: true });
 
-  const revealedCount = game.grid_state.filter(x => x === 2).length;
-  if (revealedCount === 0) {
-    return ctx.answerCallbackQuery({ text: "Open at least one tile to cashout!", show_alert: true });
-  }
+  const revealed = game.grid_state.filter(x => x === 2).length;
+  if (revealed === 0) return ctx.answerCallbackQuery({ text: "Open at least 1 tile", show_alert: true });
 
-  const multiplier = 1 + (revealedCount * 0.15 * game.mines_count);
+  const multiplier = 1 + (revealed * 0.15 * game.mines_count);
   const winAmount = Math.floor(game.bet_amount * multiplier);
-
+  
   const user = await getUser(ctx.from.id);
   await supabase.from("users").update({ balance: user.balance + winAmount }).eq("user_id", ctx.from.id);
-  
   await supabase.from("active_games").update({ is_active: false }).eq("id", gameId);
 
-  const finalKb = new InlineKeyboard();
-  for (let i = 0; i < 25; i++) {
-    let label = "⬜";
-    if (game.grid_state[i] === 1) label = "💣";
-    if (game.grid_state[i] === 2) label = "✅";
-    finalKb.text(label, `mines_end_${i}`);
-    if ((i + 1) % 5 === 0) finalKb.row();
-  }
-
-  await ctx.editMessageText(`💰 <b>CASHOUT SUCCESSFUL!</b>\n🎉 You won: <b>${fmt(winAmount)}</b>\n(Multiplier: x${multiplier.toFixed(2)})`, { parse_mode: "HTML", reply_markup: finalKb });
-  await ctx.answerCallbackQuery({ text: `Won ${fmt(winAmount)}!`, show_alert: true });
+  await ctx.editMessageText(`💰 CASHOUT! Won: ${fmt(winAmount)} (x${multiplier.toFixed(2)})`, { parse_mode: "HTML" });
+  await ctx.answerCallbackQuery({ text: `Won ${fmt(winAmount)}!` });
 });
 
 async function handleTransferRequest(ctx, toUser, amount) {
@@ -932,6 +911,7 @@ async function handleTransferRequest(ctx, toUser, amount) {
   }).select().single();
 
   if (error) return ctx.reply("❌ Error creating transfer request.");
+
   const kb = new InlineKeyboard()
     .text("✅ Confirm | تایید", `tr_confirm_${pending.id}`)
     .text("❌ Cancel | لغو", `tr_cancel_${pending.id}`);
@@ -949,8 +929,7 @@ async function handleTransferRequest(ctx, toUser, amount) {
   await supabase.from("pending_transfers").update({ message_id: sent.message_id }).eq("id", pending.id);
 }
 
-bot.callbackQuery(/^tr_confirm_(.+)$/, async (ctx) => {
-  const id = ctx.match[1];
+bot.callbackQuery(/^tr_confirm_(.+)$/, async (ctx) => {  const id = ctx.match[1];
   const { data: pending } = await supabase.from("pending_transfers").select("*").eq("id", id).maybeSingle();
   if (!pending || pending.status !== "pending") return ctx.answerCallbackQuery({ text: "Request expired.", show_alert: true });
   if (pending.from_user_id !== ctx.from.id) return ctx.answerCallbackQuery({ text: "Only sender can confirm.", show_alert: true });
@@ -982,6 +961,7 @@ async function createBill(ctx, amount, maxUses) {
   const { data: bill, error } = await supabase.from("bills").insert({
     creator_id: ctx.from.id, amount, max_uses: maxUses, used_count: 0, chat_id: ctx.chat.id, is_active: true,
   }).select().single();
+
   if (error) return ctx.reply("❌ Error creating bill.");
 
   const link = `https://t.me/${BOT_USERNAME}?start=bill_${bill.id}`;
@@ -998,8 +978,7 @@ function billText(bill, payers) {
     ? payers.map((p) => {
         const info = p.users || {};
         const label = info.username ? `@${info.username}` : (info.first_name || "User | کاربر");
-        return `• ${label}`;
-      }).join("\n")
+        return `• ${label}`;      }).join("\n")
     : "— No payments yet | هنوز کسی پرداخت نکرده —";
 
   return (
@@ -1030,7 +1009,8 @@ async function payBill(ctx, billId) {
   const newUsedCount = bill.used_count + 1;
   const isNowInactive = bill.max_uses !== null && newUsedCount >= bill.max_uses;
 
-  await supabase.from("bills").update({ used_count: newUsedCount, is_active: !isNowInactive }).eq("id", billId);  await ctx.reply(`✅ Payment successful.\n💰 <b>${fmt(bill.amount)}</b> sent to the bill creator.`, { parse_mode: "HTML" });
+  await supabase.from("bills").update({ used_count: newUsedCount, is_active: !isNowInactive }).eq("id", billId);
+  await ctx.reply(`✅ Payment successful.\n💰 <b>${fmt(bill.amount)}</b> sent to the bill creator.`, { parse_mode: "HTML" });
 
   if (bill.chat_id && bill.message_id) {
     const { data: payments } = await supabase.from("bill_payments").select("user_id").eq("bill_id", billId).order("paid_at", { ascending: true });
@@ -1047,8 +1027,7 @@ async function payBill(ctx, billId) {
     try {
       const kb = isNowInactive ? undefined : new InlineKeyboard().url("💳 Pay Bill | پرداخت", `https://t.me/${BOT_USERNAME}?start=bill_${billId}`);
       await bot.api.editMessageText(bill.chat_id, bill.message_id, billText(updatedBill, payersWithInfo), { parse_mode: "HTML", reply_markup: kb });
-    } catch (e) { console.error("editMessageText error:", e.message); }
-  }
+    } catch (e) { console.error("editMessageText error:", e.message); }  }
 }
 
 async function createGiveaway(api, chatId, amount, createdBy) {
@@ -1079,7 +1058,8 @@ bot.callbackQuery(/^giveaway_claim_(.+)$/, async (ctx) => {
     return ctx.answerCallbackQuery({ text: "این جایزه قبلاً گرفته شده!", show_alert: true });
   }
 
-  const { data: updated } = await supabase    .from("giveaways")
+  const { data: updated } = await supabase
+    .from("giveaways")
     .update({ is_claimed: true, claimed_by: ctx.from.id })
     .eq("id", id)
     .eq("is_claimed", false)
@@ -1096,8 +1076,7 @@ bot.callbackQuery(/^giveaway_claim_(.+)$/, async (ctx) => {
 
   try {
     await ctx.api.deleteMessage(giveaway.chat_id, giveaway.message_id);
-  } catch (e) {
-    console.error("delete giveaway message error:", e.message);
+  } catch (e) {    console.error("delete giveaway message error:", e.message);
   }
 
   await ctx.answerCallbackQuery({ text: `🎉 تبریک! ${fmt(giveaway.amount)} دپث تون گرفتی!`, show_alert: true });
@@ -1128,7 +1107,8 @@ async function handleStats(ctx) {
   const topUserId = rows[0].user_id;
 
   const { data: existingReward } = await supabase
-    .from("daily_stat_rewards")    .select("*")
+    .from("daily_stat_rewards")
+    .select("*")
     .eq("chat_id", ctx.chat.id)
     .eq("day", today)
     .maybeSingle();
@@ -1145,8 +1125,7 @@ async function handleStats(ctx) {
   }
 
   await ctx.reply(
-    `📊 <b>آمار پیام‌های امروز</b>\n\n${lines.join("\n")}\n\n${rewardLine}`,
-    { parse_mode: "HTML" }
+    `📊 <b>آمار پیام‌های امروز</b>\n\n${lines.join("\n")}\n\n${rewardLine}`,    { parse_mode: "HTML" }
   );
 }
 
